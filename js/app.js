@@ -1,895 +1,1445 @@
 // ============================================
-// RENTEASE PPT BUILDER — app.js
-// AI-powered slide generator + editor + exporter
+// RENTEASE PPT BUILDER — Core Framework
 // ============================================
 
-// ── Brand Constants ──────────────────────────────────────────────────────────
-const RED   = '9B1C1C'; // Deep Rentease Red (hex, no #, for pptxgenjs)
-const DARK  = '1A1A1A';
-const WHITE = 'FFFFFF';
-const LIGHT = 'F5F5F5';
+// ============================================
+// 1. PRESENTATION DATA MODEL
+// ============================================
 
-// Rentease brand colours as CSS strings
-const CSS_RED  = '#E32227';
-const CSS_DARK = '#1A1A1A';
+let presentation = { slides: [] };
+let activeSlideId = null;
+let blockCounter = 0;
+let slideCounter = 0;
+let currentPreviewIndex = 0;
 
-// ── API Keys (Google Custom Search — used for image lookup) ──────────────────
-const IMG_SEARCH_API_KEY = 'AIzaSyCpgszqpGG0KPgC9RUiGdaNCKK22-n582s';
-const IMG_SEARCH_CX      = '0506f8fd5d6bb470c';
-const imageSearchCache   = {};
+// ============================================
+// 2. DOM REFERENCES
+// ============================================
 
-// ── Application State ─────────────────────────────────────────────────────────
-let slides           = [];   // Array of slide data objects
-let currentSlideIdx  = 0;   // Index of the currently-edited slide
-let currentStep      = 1;   // Active wizard step (1-4)
-let previewSlideIdx  = 0;   // Index shown in preview
+const navItems = document.querySelectorAll('.nav-item');
+const mainContent = document.querySelector('.main-content');
+// Add gamma-step class on initial load so step 1 gets the centred layout
+mainContent.classList.add('gamma-step');
+const step1Content = mainContent.innerHTML;
+let selectedLayout = null;
 
-// ── Slide data model ─────────────────────────────────────────────────────────
-// Each slide = { id, layout, title, subtitle, bullets, imageQuery, blocks, ... }
-
-// ── Available layouts ─────────────────────────────────────────────────────────
-const LAYOUTS = [
-    { id: 'title',       label: 'Title Slide',         desc: 'Cover / opening slide' },
-    { id: 'image-text',  label: 'Image + Text',         desc: 'Left image, right bullets' },
-    { id: 'text-image',  label: 'Text + Image',         desc: 'Left bullets, right image' },
-    { id: 'bullets',     label: 'Full Text / Bullets',  desc: 'Text-only content slide' },
-    { id: 'profile-quote', label: 'Profile & Quote',   desc: 'Person + quote callout' },
-    { id: 'icon-grid',   label: 'Icon Grid',            desc: '6-point feature grid' },
-    { id: 'four-images', label: 'Four Images',          desc: '2×2 image showcase' },
-    { id: 'thank-you',   label: 'Thank You',            desc: 'Closing / contact slide' },
-];
-
-// ─────────────────────────────────────────────────────────────────────────────
-// INIT
-// ─────────────────────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', async function () {
-    await initDB();
-    setupNavigation();
-    setupParticleCanvas();
-    renderStep(1);
-    updateResumePanelFromState();
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// NAVIGATION
-// ─────────────────────────────────────────────────────────────────────────────
-function setupNavigation() {
-    document.querySelectorAll('.nav-item').forEach(function (item) {
-        item.addEventListener('click', function () {
-            const step = parseInt(item.dataset.step);
-            if (step === 2 && slides.length === 0) {
-                alert('Generate or create at least one slide first.');
-                return;
-            }
-            if ((step === 3 || step === 4) && slides.length === 0) {
-                alert('You need slides before you can preview or export.');
-                return;
-            }
-            goToStep(step);
-        });
-    });
-}
-
-function goToStep(step) {
-    currentStep = step;
-
-    // Update nav active state
-    document.querySelectorAll('.nav-item').forEach(function (item) {
-        item.classList.toggle('active', parseInt(item.dataset.step) === step);
-    });
-
-    renderStep(step);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// MAIN RENDER ROUTER
-// ─────────────────────────────────────────────────────────────────────────────
-function renderStep(step) {
-    const main = document.querySelector('.main-content');
-
-    // Remove gamma-step class when leaving step 1
-    main.classList.toggle('gamma-step', step === 1);
-
-    switch (step) {
-        case 1: renderStep1(main); break;
-        case 2: renderStep2(main); break;
-        case 3: renderStep3(main); break;
-        case 4: renderStep4(main); break;
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// STEP 1 — Gamma-style AI Prompt
-// ─────────────────────────────────────────────────────────────────────────────
-function renderStep1(main) {
-    main.innerHTML = `
-        <div class="gamma-hero-text">
-            <h2>Rentease <span>AI</span></h2>
-            <p>Type a topic. Get a presentation instantly.</p>
+const stepContent = {
+    3: `
+        <h2>Preview</h2>
+        <p class="subtitle">Review your presentation before exporting</p>
+        <div class="editor-placeholder">
+            <div class="placeholder-icon">👁️</div>
+            <p>Your slide preview will appear here.</p>
         </div>
-
-        <div class="gamma-prompt-card">
-            <textarea id="aiPromptInput" class="gamma-prompt-input"
-                placeholder="E.g., Create a 6-slide corporate pitch deck for Rentease's new line of electric scissor lifts. Highlight eco-friendliness and safety..."></textarea>
-
-            <div class="gamma-controls">
-                <div class="gamma-settings">
-                    <label>Slides:</label>
-                    <input type="number" id="aiSlideCount" value="6" min="3" max="15" class="gamma-input-small">
-                </div>
-                <button id="aiGenerateBtn" class="gamma-generate-btn" onclick="generateAIPresentation()">
-                    ✦ Generate
-                </button>
-            </div>
-
-            <div id="aiLoadingStatus" class="gamma-loading" style="display:none;">
-                <div class="gamma-spinner"></div>
-                <p id="aiStatusText">AI is thinking…</p>
-            </div>
+    `,
+    4: `
+        <h2>Export</h2>
+        <p class="subtitle">Download your presentation</p>
+        <div class="editor-placeholder">
+            <div class="placeholder-icon">📥</div>
+            <p>Export options will appear here.</p>
         </div>
-    `;
-}
+    `
+};
 
-// ─────────────────────────────────────────────────────────────────────────────
-// AI PRESENTATION GENERATOR
-// ─────────────────────────────────────────────────────────────────────────────
-async function generateAIPresentation() {
-    const promptInput = document.getElementById('aiPromptInput');
-    const slideCount  = parseInt(document.getElementById('aiSlideCount').value) || 6;
-    const userPrompt  = (promptInput ? promptInput.value : '').trim();
+const layoutNames = {
+    'title-slide': 'Title Slide',
+    'image-text': 'Image + Text',
+    'icon-grid': 'Icon Grid',
+    'text-image': 'Text + Image',
+    'profile-quote': 'Profile / Quote',
+    'image-showcase': 'Image Showcase',
+    'image-grid-labels': 'Image Grid + Labels',
+    'equipment-comparison': 'Equipment Comparison',
+    'thank-you': 'Thank You / Contact'
+};
 
-    if (!userPrompt) {
-        alert('Please type a topic or description first.');
-        return;
-    }
+// ============================================
+// 3. SLIDE MANAGEMENT
+// ============================================
 
-    const btn    = document.getElementById('aiGenerateBtn');
-    const status = document.getElementById('aiLoadingStatus');
-    const statusText = document.getElementById('aiStatusText');
+function addSlide(layoutType) {
+    const slideId = 'slide-' + slideCounter;
+    slideCounter++;
 
-    btn.disabled = true;
-    status.style.display = 'block';
-    statusText.textContent = 'Connecting to Gemini AI…';
-
-    try {
-        // Wait for the ESM module to load GoogleGenerativeAI
-        let attempts = 0;
-        while (!window.GoogleGenerativeAI && attempts < 40) {
-            await new Promise(function (r) { setTimeout(r, 250); });
-            attempts++;
-        }
-        if (!window.GoogleGenerativeAI) throw new Error('Google AI SDK not loaded.');
-
-        statusText.textContent = 'AI is crafting your slides…';
-
-        const genAI = new window.GoogleGenerativeAI('AIzaSyCZaKQPk0xEfCikfDjOSMuY0YGFQkMCL-s');
-        const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-
-        const systemInstruction = buildSystemPrompt(slideCount);
-        const fullPrompt = systemInstruction + '\n\nUSER REQUEST:\n' + userPrompt;
-
-        const result   = await model.generateContent(fullPrompt);
-        const rawText  = result.response.text();
-
-        statusText.textContent = 'Parsing slide data…';
-
-        const parsed = parseAIResponse(rawText, slideCount);
-
-        if (!parsed || parsed.length === 0) {
-            throw new Error('AI returned no slides. Try rephrasing your prompt.');
-        }
-
-        statusText.textContent = 'Fetching images…';
-        await enrichSlidesWithImages(parsed);
-
-        slides = parsed;
-        currentSlideIdx = 0;
-
-        updateSlideBadge();
-        updateResumePanelFromState();
-
-        goToStep(2);
-
-    } catch (err) {
-        console.error('AI generation error:', err);
-        alert('Generation failed: ' + err.message);
-        btn.disabled = false;
-        status.style.display = 'none';
-    }
-}
-
-function buildSystemPrompt(slideCount) {
-    return `You are a senior McKinsey-level business presentation writer and strategist for "RENTEASE LIMITED", a premium industrial equipment rental company based in India.
-
-COMPANY CONTEXT:
-- RentEase rents heavy equipment: cranes, aerial lifts (scissor lifts, boom lifts, JLG platforms), forklifts, earthmoving machinery, and material handling equipment
-- Target clients: construction companies, infrastructure developers, event companies, warehouses
-- Brand: Professional, reliable, safety-first, cutting-edge
-
-YOUR TASK:
-Generate exactly ${slideCount} slides based on the user's request. Output ONLY a raw JSON array (no markdown, no backticks, no code fences).
-
-AVAILABLE LAYOUTS (use each where it makes sense):
-1. "title"         — fields: title, subtitle
-2. "image-text"    — fields: title, bullets (array of 3 strings), imageQuery (e.g. "scissor lift machinery")
-3. "text-image"    — fields: title, bullets (array of 3 strings), imageQuery
-4. "profile-quote" — fields: personName, personRole, quoteHighlight, bullets (array of 3 strings), imageQuery
-5. "bullets"       — fields: title, bullets (array of 4-5 strings)
-6. "icon-grid"     — fields: title, items (array of 6 objects: {icon, label, desc})
-7. "four-images"   — fields: title, images (array of 4 objects: {label, imageQuery})
-8. "thank-you"     — fields: title, subtitle, contactEmail, contactPhone, website
-
-CRITICAL CONTENT RULES:
-- NEVER use generic filler like "Our company is committed to excellence" or "We provide high-quality service"
-- ALWAYS use specific, real-sounding data, percentages, product names, and industry terminology
-- Bullets must be punchy (max 12 words each), starting with a strong action verb or metric
-- Every imageQuery must be a specific, Google-searchable equipment or industry term
-- First slide MUST use layout "title"
-- Last slide MUST use layout "thank-you"
-- Vary layouts — do not use the same layout twice in a row
-
-OUTPUT FORMAT (pure JSON array, nothing else):
-[
-  { "layout": "title", "title": "...", "subtitle": "..." },
-  { "layout": "image-text", "title": "...", "bullets": ["...", "...", "..."], "imageQuery": "..." },
-  ...
-]`;
-}
-
-function parseAIResponse(rawText, expectedCount) {
-    // Strip markdown code fences if present
-    let cleaned = rawText.trim();
-    cleaned = cleaned.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '').trim();
-
-    // Extract JSON array
-    const start = cleaned.indexOf('[');
-    const end   = cleaned.lastIndexOf(']');
-    if (start === -1 || end === -1) throw new Error('No JSON array found in AI response.');
-
-    const jsonStr = cleaned.slice(start, end + 1);
-    let parsed;
-    try {
-        parsed = JSON.parse(jsonStr);
-    } catch (e) {
-        // Try to fix common JSON issues
-        const fixed = jsonStr
-            .replace(/,\s*}/g, '}')
-            .replace(/,\s*]/g, ']');
-        parsed = JSON.parse(fixed);
-    }
-
-    if (!Array.isArray(parsed)) throw new Error('AI output is not a JSON array.');
-
-    // Ensure each slide has an id
-    return parsed.map(function (slide, idx) {
-        slide.id = 'slide_' + Date.now() + '_' + idx;
-        // Normalise bullets
-        if (!slide.bullets) slide.bullets = [];
-        if (!slide.items)   slide.items   = [];
-        if (!slide.images)  slide.images  = [];
-        return slide;
-    });
-}
-
-// ── Image fetching ────────────────────────────────────────────────────────────
-async function searchGoogleImage(query) {
-    if (!query) return '';
-    if (imageSearchCache[query]) return imageSearchCache[query];
-
-    try {
-        const q   = encodeURIComponent(query + ' equipment industrial');
-        const url = `https://www.googleapis.com/customsearch/v1?key=${IMG_SEARCH_API_KEY}&cx=${IMG_SEARCH_CX}&q=${q}&searchType=image&num=1&imgSize=large&safe=active`;
-        const res = await fetch(url);
-        const data = await res.json();
-        if (data.items && data.items.length > 0) {
-            const imgUrl = data.items[0].link;
-            imageSearchCache[query] = imgUrl;
-            return imgUrl;
-        }
-    } catch (e) {
-        console.warn('Image search failed for:', query, e);
-    }
-
-    // Fallback: use a local layout PNG based on a hash of the query
-    const fallback = localFallbackImage(query);
-    imageSearchCache[query] = fallback;
-    return fallback;
-}
-
-function localFallbackImage(query) {
-    // Pick a layout PNG as a placeholder based on a simple hash
-    const total = 29;
-    let hash = 0;
-    for (let i = 0; i < query.length; i++) {
-        hash = (hash * 31 + query.charCodeAt(i)) & 0xFFFF;
-    }
-    const num = (hash % total) + 1;
-    const pad = num < 10 ? '0' + num : '' + num;
-    return 'layouts/slide_' + pad + '.png';
-}
-
-async function enrichSlidesWithImages(slideArr) {
-    const promises = [];
-    slideArr.forEach(function (slide) {
-        if (slide.imageQuery) {
-            promises.push(
-                searchGoogleImage(slide.imageQuery).then(function (url) {
-                    slide._imageUrl = url;
-                })
-            );
-        }
-        if (slide.images && slide.images.length) {
-            slide.images.forEach(function (img) {
-                promises.push(
-                    searchGoogleImage(img.imageQuery || img.label || '').then(function (url) {
-                        img._imageUrl = url;
-                    })
-                );
-            });
-        }
-    });
-    await Promise.allSettled(promises);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// STEP 2 — Slide Editor
-// ─────────────────────────────────────────────────────────────────────────────
-function renderStep2(main) {
-    main.classList.remove('gamma-step');
-
-    if (slides.length === 0) {
-        main.innerHTML = `
-            <h2>Edit Slides</h2>
-            <div class="editor-placeholder">
-                <div class="placeholder-icon">🗂️</div>
-                <p>No slides yet. Go back to Step 1 and generate a presentation.</p>
-                <button class="add-btn add-btn-accent" onclick="goToStep(1)">← Go to Step 1</button>
-            </div>
-        `;
-        return;
-    }
-
-    main.innerHTML = `
-        <h2 style="margin-bottom:20px;">Edit Slides</h2>
-        <div class="step2-layout">
-            <div class="slide-list-panel" id="slideListPanel"></div>
-            <div class="editor-area" id="editorArea"></div>
-        </div>
-    `;
-
-    renderSlideList();
-    renderSlideEditor(currentSlideIdx);
-}
-
-function renderSlideList() {
-    const panel = document.getElementById('slideListPanel');
-    if (!panel) return;
-
-    let html = '';
-    slides.forEach(function (slide, idx) {
-        const isActive = idx === currentSlideIdx;
-        const title    = slide.title || slide.personName || ('Slide ' + (idx + 1));
-        html += `
-            <div class="slide-thumb ${isActive ? 'active' : ''}" onclick="selectSlide(${idx})">
-                <div class="slide-thumb-number">${idx + 1}</div>
-                <div class="slide-thumb-info">
-                    <span class="slide-thumb-layout">${slide.layout || 'slide'}</span>
-                    <span class="slide-thumb-title">${escHtml(title)}</span>
-                </div>
-                <div class="slide-thumb-actions">
-                    <button class="thumb-btn" title="Move up" onclick="event.stopPropagation(); moveSlide(${idx},-1)">▲</button>
-                    <button class="thumb-btn thumb-btn-delete" title="Delete" onclick="event.stopPropagation(); deleteSlide(${idx})">✕</button>
-                    <button class="thumb-btn" title="Move down" onclick="event.stopPropagation(); moveSlide(${idx},1)">▼</button>
-                </div>
-            </div>
-        `;
-    });
-
-    html += `<button class="add-slide-btn" onclick="addNewSlide()">+ Add Slide</button>`;
-    panel.innerHTML = html;
-}
-
-function selectSlide(idx) {
-    currentSlideIdx = idx;
-    renderSlideList();
-    renderSlideEditor(idx);
-}
-
-function moveSlide(idx, dir) {
-    const newIdx = idx + dir;
-    if (newIdx < 0 || newIdx >= slides.length) return;
-    const tmp = slides[idx];
-    slides[idx]    = slides[newIdx];
-    slides[newIdx] = tmp;
-    if (currentSlideIdx === idx) currentSlideIdx = newIdx;
-    renderSlideList();
-    renderSlideEditor(currentSlideIdx);
-}
-
-function deleteSlide(idx) {
-    if (slides.length === 1) { alert('You need at least one slide.'); return; }
-    if (!confirm('Delete this slide?')) return;
-    slides.splice(idx, 1);
-    currentSlideIdx = Math.min(currentSlideIdx, slides.length - 1);
-    updateSlideBadge();
-    renderSlideList();
-    renderSlideEditor(currentSlideIdx);
-}
-
-function addNewSlide() {
-    const newSlide = {
-        id: 'slide_' + Date.now(),
-        layout: 'bullets',
-        title: 'New Slide',
-        bullets: ['Point one', 'Point two', 'Point three'],
+    const slide = {
+        id: slideId,
+        layout: layoutType,
+        title: '',
+        blocks: [],
+        // Extra fields used by specific layouts
+        fields: {}
     };
-    slides.push(newSlide);
-    currentSlideIdx = slides.length - 1;
-    updateSlideBadge();
-    renderSlideList();
-    renderSlideEditor(currentSlideIdx);
+
+    // Pre-fill default fields per layout
+    if (layoutType === 'title-slide') {
+        slide.fields = {
+            companyName: 'RENTEASE LIMITED',
+            subtitle: 'Corporate Presentation',
+            tagline: 'MAKE THE DIFFERENCE'
+        };
+    }
+
+    if (layoutType === 'thank-you') {
+        slide.fields = {
+            address: '705-706, The Landmark, Plot 26A, Sector 7, Kharghar, Navi Mumbai - 410210',
+            phone: '+91 22 2774 7458',
+            email: 'info@rentease.co'
+        };
+    }
+
+    if (layoutType === 'image-grid-labels') {
+        slide.fields = {
+            cells: [
+                { src: '', label: '' },
+                { src: '', label: '' },
+                { src: '', label: '' },
+                { src: '', label: '' }
+            ]
+        };
+    }
+
+    if (layoutType === 'equipment-comparison') {
+        slide.fields = {
+            leftImage: '',
+            leftBullets: ['', '', ''],
+            centerTitle: '',
+            centerDesc: '',
+            tableRows: [
+                { col1: '', col2: '', col3: '' }
+            ],
+            rightImage: '',
+            rightBullets: ['', '', '']
+        };
+    }
+
+    if (layoutType === 'profile-quote') {
+        slide.fields = {
+            photo: '',
+            personName: '',
+            personRole: '',
+            quoteHighlight: ''
+        };
+    }
+
+    presentation.slides.push(slide);
+    activeSlideId = slideId;
+    updateSidebarStatus();
+    savePresentation();
+    return slide;
 }
 
-// ── Slide editor form ─────────────────────────────────────────────────────────
-function renderSlideEditor(idx) {
-    const area  = document.getElementById('editorArea');
-    if (!area) return;
-    const slide = slides[idx];
+function removeSlide(slideId) {
+    presentation.slides = presentation.slides.filter(s => s.id !== slideId);
+    if (activeSlideId === slideId) {
+        activeSlideId = presentation.slides.length > 0
+            ? presentation.slides[presentation.slides.length - 1].id
+            : null;
+    }
+    updateSidebarStatus();
+    savePresentation();
+    renderStep2();
+}
+
+function moveSlide(slideId, direction) {
+    const index = presentation.slides.findIndex(s => s.id === slideId);
+    const newIndex = index + direction;
+    if (newIndex < 0 || newIndex >= presentation.slides.length) return;
+    const slide = presentation.slides.splice(index, 1)[0];
+    presentation.slides.splice(newIndex, 0, slide);
+    updateSidebarStatus();
+    savePresentation();
+    renderStep2();
+}
+
+function getActiveSlide() {
+    return presentation.slides.find(s => s.id === activeSlideId);
+}
+
+function selectSlide(slideId) {
+    activeSlideId = slideId;
+    renderStep2();
+}
+
+// ============================================
+// 4. BLOCK MANAGEMENT
+// ============================================
+
+function addBlock(type) {
+    const slide = getActiveSlide();
     if (!slide) return;
 
-    area.innerHTML = `
+    const blockId = 'block-' + blockCounter++;
+
+    if (type === 'image') {
+        slide.blocks.push({ id: blockId, type: 'image', src: '', caption: '', shape: 'circle' });
+    } else if (type === 'icon') {
+        slide.blocks.push({ id: blockId, type: 'icon', src: '', label: '' });
+    } else if (type === 'logo') {
+        slide.blocks.push({ id: blockId, type: 'logo', src: '' });
+    } else {
+        slide.blocks.push({ id: blockId, type: type, text: '' });
+    }
+    savePresentation();
+    renderStep2();
+
+}
+
+function removeBlock(blockId) {
+    const slide = getActiveSlide();
+    if (!slide) return;
+    slide.blocks = slide.blocks.filter(b => b.id !== blockId);
+    savePresentation();
+    renderStep2();
+}
+
+function updateBlockText(blockId, value) {
+    const slide = getActiveSlide();
+    if (!slide) return;
+    const block = slide.blocks.find(b => b.id === blockId);
+    if (block) block.text = value;
+    updateSlidePreview();
+}
+
+function updateBlockLabel(blockId, value) {
+    const slide = getActiveSlide();
+    if (!slide) return;
+    const block = slide.blocks.find(b => b.id === blockId);
+    if (block) block.label = value;
+    updateSlidePreview();
+}
+
+function updateSlideTitle(value) {
+    const slide = getActiveSlide();
+    if (slide) slide.title = value;
+    updateSlidePreview();
+}
+
+function updateField(fieldName, value) {
+    const slide = getActiveSlide();
+    if (slide) slide.fields[fieldName] = value;
+    updateSlidePreview();
+}
+
+function updateImageCaption(blockId, value) {
+    const slide = getActiveSlide();
+    if (!slide) return;
+    const block = slide.blocks.find(b => b.id === blockId);
+    if (block) block.caption = value;
+    updateSlidePreview();
+}
+
+function updateImageShape(blockId, value) {
+    const slide = getActiveSlide();
+    if (!slide) return;
+    const block = slide.blocks.find(b => b.id === blockId);
+    if (block) block.shape = value;
+    updateSlidePreview();
+}
+
+// Handles image blocks (Image+Text, Image Showcase etc.)
+function handleImageUpload(blockId, event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const imageKey = 'img_' + blockId;
+    dbSaveImage(imageKey, file).then(function() {
+        return dbLoadImage(imageKey);
+    }).then(function(url) {
+        const slide = getActiveSlide();
+        if (!slide) return;
+        const block = slide.blocks.find(function(b) { return b.id === blockId; });
+        if (block) {
+            block.src = url;
+            block.imageKey = imageKey;
+            savePresentation();
+            updateSlidePreview();
+        }
+    });
+}
+
+// Handles field images (profile photo, comparison images)
+function handleFieldImageUpload(fieldName, event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const imageKey = 'field_' + activeSlideId + '_' + fieldName;
+    dbSaveImage(imageKey, file).then(function() {
+        return dbLoadImage(imageKey);
+    }).then(function(url) {
+        const slide = getActiveSlide();
+        if (slide) {
+            slide.fields[fieldName] = url;
+            slide.fields[fieldName + '_key'] = imageKey;
+            savePresentation();
+            updateSlidePreview();
+        }
+    });
+}
+// Handles 2x2 grid cell images
+function handleCellImageUpload(index, event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const imageKey = 'cell_' + activeSlideId + '_' + index;
+    dbSaveImage(imageKey, file).then(function() {
+        return dbLoadImage(imageKey);
+    }).then(function(url) {
+        const slide = getActiveSlide();
+        if (slide && slide.fields.cells) {
+            slide.fields.cells[index].src = url;
+            slide.fields.cells[index].imageKey = imageKey;
+            savePresentation();
+            updateSlidePreview();
+        }
+    });
+}
+
+function updateComparisonField(side, index, value) {
+    const slide = getActiveSlide();
+    if (!slide) return;
+    if (side === 'leftBullets' || side === 'rightBullets') {
+        slide.fields[side][index] = value;
+    } else {
+        slide.fields[side] = value;
+    }
+    updateSlidePreview();
+}
+
+// Handles equipment comparison side images
+function handleComparisonImage(side, event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const imageKey = 'comp_' + activeSlideId + '_' + side;
+    dbSaveImage(imageKey, file).then(function() {
+        return dbLoadImage(imageKey);
+    }).then(function(url) {
+        const slide = getActiveSlide();
+        if (slide) {
+            slide.fields[side] = url;
+            slide.fields[side + '_key'] = imageKey;
+            savePresentation();
+            updateSlidePreview();
+        }
+    });
+}
+// ============================================
+// 5. EDITOR HTML — one case per layout
+// ============================================
+
+function getEditorHTML(slide) {
+    let blocksHTML = '';
+    slide.blocks.forEach(b => { blocksHTML += getBlockHTML(b); });
+
+    const previewHTML = getSlidePreviewHTML(slide);
+
+    // ------- Shared wrapper -------
+    const wrapEditor = (formFields) => `
         <div class="editor-container">
             <div class="slide-preview-wrapper">
-                <div class="slide-preview" id="livePreview">
-                    ${buildSlidePreviewHTML(slide)}
+                <div class="slide-preview" id="slidePreview">
+                    ${previewHTML}
                 </div>
             </div>
             <div class="editor-panel">
-                <div class="editor-heading">
-                    Slide ${idx + 1} — 
-                    <select id="layoutSelect" onchange="changeLayout(this.value)" style="font-family:inherit;padding:4px 8px;border:1px solid #e5e7eb;border-radius:6px;font-size:0.95rem;">
-                        ${LAYOUTS.map(function(l) {
-                            return `<option value="${l.id}" ${slide.layout === l.id ? 'selected' : ''}>${l.label}</option>`;
-                        }).join('')}
+                <h3 class="editor-heading">Edit: ${layoutNames[slide.layout]}</h3>
+                ${formFields}
+            </div>
+        </div>
+    `;
+
+    const titleField = `
+        <div class="form-group">
+            <label>Slide Title</label>
+            <input type="text" id="slideTitle" placeholder="e.g. COMPANY PROFILE" oninput="updateSlideTitle(this.value)">
+        </div>
+    `;
+
+    // ============================================
+    switch (slide.layout) {
+
+        // ---- 1. TITLE SLIDE ----
+        case 'title-slide':
+            return wrapEditor(`
+                <div class="form-group">
+                    <label>Company Name</label>
+                    <input type="text" id="f_companyName" placeholder="RENTEASE LIMITED"
+                        oninput="updateField('companyName', this.value)">
+                </div>
+                <div class="form-group">
+                    <label>Subtitle</label>
+                    <input type="text" id="f_subtitle" placeholder="Corporate Presentation"
+                        oninput="updateField('subtitle', this.value)">
+                </div>
+                <div class="form-group">
+                    <label>Tagline (bottom)</label>
+                    <input type="text" id="f_tagline" placeholder="MAKE THE DIFFERENCE"
+                        oninput="updateField('tagline', this.value)">
+                </div>
+            `);
+
+        // ---- 2. IMAGE + TEXT ----
+        case 'image-text':
+            return wrapEditor(`
+                ${titleField}
+                <div id="contentBlocks">${blocksHTML}</div>
+                <div class="add-buttons">
+                    <button class="add-btn" onclick="addBlock('paragraph')">+ Paragraph</button>
+                    <button class="add-btn" onclick="addBlock('bullet')">+ Bullet Point</button>
+                    <button class="add-btn add-btn-accent" onclick="addBlock('image')">+ Image</button>
+                </div>
+            `);
+
+        // ---- 3. ICON GRID ----
+        case 'icon-grid':
+            return wrapEditor(`
+                ${titleField}
+                <p class="form-hint">Add icons with labels. Ideal: 6–10 icons in a grid.</p>
+                <div id="contentBlocks">${blocksHTML}</div>
+                <div class="add-buttons">
+                    <button class="add-btn add-btn-accent" onclick="addBlock('icon')">+ Add Icon</button>
+                </div>
+            `);
+
+        // ---- 4. TEXT + IMAGE ----
+        case 'text-image':
+            return wrapEditor(`
+                ${titleField}
+                <div id="contentBlocks">${blocksHTML}</div>
+                <div class="add-buttons">
+                    <button class="add-btn" onclick="addBlock('paragraph')">+ Paragraph</button>
+                    <button class="add-btn" onclick="addBlock('bullet')">+ Bullet Point</button>
+                    <button class="add-btn add-btn-accent" onclick="addBlock('image')">+ Image</button>
+                </div>
+            `);
+
+        // ---- 5. PROFILE / QUOTE ----
+        case 'profile-quote':
+            return wrapEditor(`
+                ${titleField}
+                <div class="form-group">
+                    <label>Person Photo</label>
+                    <input type="file" accept="image/*" onchange="handleFieldImageUpload('photo', event)">
+                </div>
+                <div class="form-group">
+                    <label>Person Name</label>
+                    <input type="text" id="f_personName" placeholder="Mr. Meghraj Singh"
+                        oninput="updateField('personName', this.value)">
+                </div>
+                <div class="form-group">
+                    <label>Role / Title</label>
+                    <input type="text" id="f_personRole" placeholder="Co-founder & MD"
+                        oninput="updateField('personRole', this.value)">
+                </div>
+                <div class="form-group">
+                    <label>Quote / Highlight Box</label>
+                    <input type="text" id="f_quoteHighlight" placeholder="&quot;Leading the Aerial Platform Association...&quot;"
+                        oninput="updateField('quoteHighlight', this.value)">
+                </div>
+                <div id="contentBlocks">${blocksHTML}</div>
+                <div class="add-buttons">
+                    <button class="add-btn" onclick="addBlock('paragraph')">+ Paragraph</button>
+                    <button class="add-btn" onclick="addBlock('bullet')">+ Bullet Point</button>
+                </div>
+            `);
+
+        // ---- 6. IMAGE SHOWCASE ----
+        case 'image-showcase':
+            return wrapEditor(`
+                ${titleField}
+                <p class="form-hint">Upload images with optional captions. They'll be displayed across the slide.</p>
+                <div id="contentBlocks">${blocksHTML}</div>
+                <div class="add-buttons">
+                    <button class="add-btn add-btn-accent" onclick="addBlock('image')">+ Add Image</button>
+                </div>
+            `);
+
+        // ---- 7. IMAGE GRID + LABELS ----
+        case 'image-grid-labels': {
+            const cells = slide.fields.cells || [{},{},{},{}];
+            const cellsHTML = cells.map((cell, i) => `
+                <div class="content-block">
+                    <div class="block-header">
+                        <span class="block-type-label">Cell ${i + 1}</span>
+                    </div>
+                    <div class="image-block-controls">
+                        <input type="file" accept="image/*" onchange="handleCellImageUpload(${i}, event)">
+                        <input type="text" placeholder="Label text (e.g. Recruitment and Training)"
+                            value="${escapeHtml(cell.label || '')}"
+                            oninput="updateGridCell(${i}, 'label', this.value)">
+                    </div>
+                </div>
+            `).join('');
+
+            return wrapEditor(`
+                ${titleField}
+                <p class="form-hint">Fill in all 4 cells. Each cell has an image and a label.</p>
+                ${cellsHTML}
+            `);
+        }
+
+        // ---- 8. EQUIPMENT COMPARISON ----
+        case 'equipment-comparison': {
+            const f = slide.fields;
+            return wrapEditor(`
+                ${titleField}
+                <div class="comparison-editor">
+                    <div class="comp-section">
+                        <h4 class="comp-section-title">⬅ Left Side</h4>
+                        <div class="form-group">
+                            <label>Image</label>
+                            <input type="file" accept="image/*" onchange="handleComparisonImage('leftImage', event)">
+                        </div>
+                        <div class="form-group">
+                            <label>Bullet Points</label>
+                            ${[0,1,2].map(i => `
+                                <input type="text" placeholder="Bullet ${i+1}..."
+                                    value="${escapeHtml((f.leftBullets||[])[i] || '')}"
+                                    oninput="updateComparisonField('leftBullets', ${i}, this.value)"
+                                    style="margin-bottom:6px;">
+                            `).join('')}
+                        </div>
+                    </div>
+                    <div class="comp-section">
+                        <h4 class="comp-section-title">⚙ Centre</h4>
+                        <div class="form-group">
+                            <label>Label (e.g. "Powered by Diesel")</label>
+                            <input type="text" placeholder="Powered by Diesel"
+                                value="${escapeHtml(f.centerTitle || '')}"
+                                oninput="updateComparisonField('centerTitle', null, this.value)">
+                        </div>
+                        <div class="form-group">
+                            <label>Description</label>
+                            <textarea placeholder="Short description..." rows="3"
+                                oninput="updateComparisonField('centerDesc', null, this.value)">${escapeHtml(f.centerDesc || '')}</textarea>
+                        </div>
+                    </div>
+                    <div class="comp-section">
+                        <h4 class="comp-section-title">➡ Right Side</h4>
+                        <div class="form-group">
+                            <label>Image</label>
+                            <input type="file" accept="image/*" onchange="handleComparisonImage('rightImage', event)">
+                        </div>
+                        <div class="form-group">
+                            <label>Bullet Points</label>
+                            ${[0,1,2].map(i => `
+                                <input type="text" placeholder="Bullet ${i+1}..."
+                                    value="${escapeHtml((f.rightBullets||[])[i] || '')}"
+                                    oninput="updateComparisonField('rightBullets', ${i}, this.value)"
+                                    style="margin-bottom:6px;">
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+            `);
+        }
+
+        // ---- 9. THANK YOU / CONTACT ----
+        case 'thank-you':
+            return wrapEditor(`
+                <div class="form-group">
+                    <label>Address</label>
+                    <textarea id="f_address" rows="2"
+                        placeholder="705-706, The Landmark..."
+                        oninput="updateField('address', this.value)">${escapeHtml(slide.fields.address || '')}</textarea>
+                </div>
+                <div class="form-group">
+                    <label>Phone Number</label>
+                    <input type="text" id="f_phone" placeholder="+91 22 2774 7458"
+                        oninput="updateField('phone', this.value)">
+                </div>
+                <div class="form-group">
+                    <label>Email Address</label>
+                    <input type="text" id="f_email" placeholder="info@rentease.co"
+                        oninput="updateField('email', this.value)">
+                </div>
+            `);
+
+        default:
+            return `<div class="editor-placeholder">
+                <div class="placeholder-icon">🚧</div>
+                <p>Editor coming soon!</p>
+            </div>`;
+    }
+}
+
+// ============================================
+// 6. BLOCK HTML
+// ============================================
+
+function getBlockHTML(block) {
+    let inner = '';
+
+    if (block.type === 'paragraph') {
+        inner = `
+            <div class="block-header">
+                <span class="block-type-label">📝 Paragraph</span>
+                <button class="remove-btn" onclick="removeBlock('${block.id}')">✕</button>
+            </div>
+            <textarea placeholder="Enter paragraph text..."
+                oninput="updateBlockText('${block.id}', this.value)">${escapeHtml(block.text)}</textarea>
+        `;
+    } else if (block.type === 'bullet') {
+        inner = `
+            <div class="block-header">
+                <span class="block-type-label">• Bullet Point</span>
+                <button class="remove-btn" onclick="removeBlock('${block.id}')">✕</button>
+            </div>
+            <input type="text" placeholder="Bullet text..."
+                value="${escapeHtml(block.text)}"
+                oninput="updateBlockText('${block.id}', this.value)">
+        `;
+    } else if (block.type === 'image') {
+        inner = `
+            <div class="block-header">
+                <span class="block-type-label">🖼️ Image</span>
+                <button class="remove-btn" onclick="removeBlock('${block.id}')">✕</button>
+            </div>
+            <div class="image-block-controls">
+                <input type="file" accept="image/*" onchange="handleImageUpload('${block.id}', event)">
+                <input type="text" placeholder="Caption (e.g. Boom Lift)"
+                    value="${escapeHtml(block.caption)}"
+                    oninput="updateImageCaption('${block.id}', this.value)">
+                <div class="shape-selector">
+                    <label>Shape:</label>
+                    <select onchange="updateImageShape('${block.id}', this.value)">
+                        <option value="circle" ${block.shape==='circle'?'selected':''}>Circle</option>
+                        <option value="rectangle" ${block.shape==='rectangle'?'selected':''}>Rectangle</option>
+                        <option value="rounded" ${block.shape==='rounded'?'selected':''}>Rounded</option>
                     </select>
                 </div>
-                ${buildEditorForm(slide)}
             </div>
-        </div>
-    `;
-}
-
-function changeLayout(newLayout) {
-    const slide = slides[currentSlideIdx];
-    slide.layout = newLayout;
-    // Preserve title if it exists
-    if (!slide.title) slide.title = 'New Slide';
-    if (!slide.bullets) slide.bullets = ['Point one', 'Point two', 'Point three'];
-    if (!slide.items)   slide.items   = Array(6).fill(null).map(function(_, i) { return { icon: '⚡', label: 'Feature ' + (i+1), desc: 'Description' }; });
-    if (!slide.images)  slide.images  = Array(4).fill(null).map(function(_, i) { return { label: 'Image ' + (i+1), imageQuery: 'industrial equipment' }; });
-    renderSlideEditor(currentSlideIdx);
-}
-
-function buildEditorForm(slide) {
-    switch (slide.layout) {
-        case 'title':        return formTitle(slide);
-        case 'image-text':   return formImageText(slide);
-        case 'text-image':   return formImageText(slide, true);
-        case 'bullets':      return formBullets(slide);
-        case 'profile-quote':return formProfile(slide);
-        case 'icon-grid':    return formIconGrid(slide);
-        case 'four-images':  return formFourImages(slide);
-        case 'thank-you':    return formThankYou(slide);
-        default:             return formBullets(slide);
+        `;
+    } else if (block.type === 'icon') {
+        inner = `
+            <div class="block-header">
+                <span class="block-type-label">🔷 Icon</span>
+                <button class="remove-btn" onclick="removeBlock('${block.id}')">✕</button>
+            </div>
+            <div class="image-block-controls">
+                <input type="file" accept="image/*" onchange="handleImageUpload('${block.id}', event)">
+                <input type="text" placeholder="Label (e.g. Aviation and Airports)"
+                    value="${escapeHtml(block.label || '')}"
+                    oninput="updateBlockLabel('${block.id}', this.value)">
+            </div>
+        `;
+    } else if (block.type === 'logo') {
+        inner = `
+            <div class="block-header">
+                <span class="block-type-label">🏢 Logo</span>
+                <button class="remove-btn" onclick="removeBlock('${block.id}')">✕</button>
+            </div>
+            <input type="file" accept="image/*" onchange="handleImageUpload('${block.id}', event)">
+        `;
     }
+
+    return `<div class="content-block" id="${block.id}">${inner}</div>`;
 }
 
-// ── Form helpers ──────────────────────────────────────────────────────────────
-function formField(label, id, value, tag, extraAttr) {
-    tag = tag || 'input';
-    value = value || '';
-    const escapedValue = escHtml(value);
-    if (tag === 'textarea') {
-        return `<div class="form-group">
-            <label>${label}</label>
-            <textarea id="${id}" oninput="updateField('${id}')" ${extraAttr || ''}>${escapedValue}</textarea>
-        </div>`;
-    }
-    return `<div class="form-group">
-        <label>${label}</label>
-        <input type="text" id="${id}" value="${escapedValue}" oninput="updateField('${id}')" ${extraAttr || ''}>
-    </div>`;
-}
+// ============================================
+// 7. SLIDE PREVIEW HTML — one renderer per layout
+// ============================================
 
-function formTitle(s) {
-    return formField('Title', 'f_title', s.title)
-         + formField('Subtitle', 'f_subtitle', s.subtitle);
-}
+function getSlidePreviewHTML(slide) {
 
-function formBullets(s) {
-    const bullets = s.bullets || [];
-    let html = formField('Slide Title', 'f_title', s.title);
-    html += '<div class="form-group"><label>Bullet Points</label>';
-    bullets.forEach(function (b, i) {
-        html += `<input type="text" id="f_bullet_${i}" value="${escHtml(b)}" oninput="updateBullet(${i})" style="margin-bottom:8px;">`;
-    });
-    html += `</div>
-    <div class="add-buttons">
-        <button class="add-btn" onclick="addBullet()">+ Add Bullet</button>
-        <button class="add-btn" onclick="removeBullet()">− Remove Last</button>
-    </div>`;
-    return html;
-}
-
-function formImageText(s, flip) {
-    let html = formField('Slide Title', 'f_title', s.title);
-    html += formField('Image Search Query', 'f_imageQuery', s.imageQuery || '');
-    const bullets = s.bullets || [];
-    html += '<div class="form-group"><label>Bullet Points</label>';
-    bullets.forEach(function (b, i) {
-        html += `<input type="text" id="f_bullet_${i}" value="${escHtml(b)}" oninput="updateBullet(${i})" style="margin-bottom:8px;">`;
-    });
-    html += `</div>
-    <div class="add-buttons">
-        <button class="add-btn" onclick="addBullet()">+ Add Bullet</button>
-        <button class="add-btn" onclick="removeBullet()">− Remove Last</button>
-        <button class="add-btn add-btn-accent" onclick="refreshImage()">🔄 Refresh Image</button>
-    </div>`;
-    return html;
-}
-
-function formProfile(s) {
-    return formField('Person Name', 'f_personName', s.personName)
-         + formField('Person Role', 'f_personRole', s.personRole)
-         + formField('Quote / Highlight', 'f_quoteHighlight', s.quoteHighlight, 'textarea')
-         + formField('Image Search Query', 'f_imageQuery', s.imageQuery || '');
-}
-
-function formIconGrid(s) {
-    const items = s.items || [];
-    let html = formField('Slide Title', 'f_title', s.title);
-    html += '<div class="form-group"><label>Grid Items (icon | label | description)</label>';
-    items.forEach(function (item, i) {
-        html += `<div style="display:flex;gap:8px;margin-bottom:8px;">
-            <input type="text" value="${escHtml(item.icon||'')}" oninput="updateIconItem(${i},'icon',this.value)" style="width:50px;text-align:center;" placeholder="⚡">
-            <input type="text" value="${escHtml(item.label||'')}" oninput="updateIconItem(${i},'label',this.value)" placeholder="Label">
-            <input type="text" value="${escHtml(item.desc||'')}" oninput="updateIconItem(${i},'desc',this.value)" placeholder="Short description" style="flex:2;">
-        </div>`;
-    });
-    html += '</div>';
-    return html;
-}
-
-function formFourImages(s) {
-    const images = s.images || [];
-    let html = formField('Slide Title', 'f_title', s.title);
-    html += '<div class="form-group"><label>Images (label + search query)</label>';
-    images.forEach(function (img, i) {
-        html += `<div style="display:flex;gap:8px;margin-bottom:8px;">
-            <input type="text" value="${escHtml(img.label||'')}" oninput="updateImageItem(${i},'label',this.value)" placeholder="Label">
-            <input type="text" value="${escHtml(img.imageQuery||'')}" oninput="updateImageItem(${i},'imageQuery',this.value)" placeholder="Search query" style="flex:2;">
-            <button class="add-btn" style="padding:4px 10px;font-size:0.75rem;" onclick="refreshImageItem(${i})">🔄</button>
-        </div>`;
-    });
-    html += '</div>';
-    return html;
-}
-
-function formThankYou(s) {
-    return formField('Heading', 'f_title', s.title)
-         + formField('Subtitle', 'f_subtitle', s.subtitle)
-         + formField('Email', 'f_contactEmail', s.contactEmail)
-         + formField('Phone', 'f_contactPhone', s.contactPhone)
-         + formField('Website', 'f_website', s.website);
-}
-
-// ── Field update handlers ─────────────────────────────────────────────────────
-function updateField(fieldId) {
-    const el = document.getElementById(fieldId);
-    if (!el) return;
-    const slide = slides[currentSlideIdx];
-    const key   = fieldId.replace('f_', '');
-    slide[key]  = el.value;
-    refreshLivePreview();
-}
-
-function updateBullet(idx) {
-    const el = document.getElementById('f_bullet_' + idx);
-    if (!el) return;
-    slides[currentSlideIdx].bullets[idx] = el.value;
-    refreshLivePreview();
-}
-
-function addBullet() {
-    const slide = slides[currentSlideIdx];
-    if (!slide.bullets) slide.bullets = [];
-    slide.bullets.push('New point');
-    renderSlideEditor(currentSlideIdx);
-}
-
-function removeBullet() {
-    const slide = slides[currentSlideIdx];
-    if (!slide.bullets || slide.bullets.length <= 1) return;
-    slide.bullets.pop();
-    renderSlideEditor(currentSlideIdx);
-}
-
-function updateIconItem(idx, key, value) {
-    const slide = slides[currentSlideIdx];
-    if (!slide.items) slide.items = [];
-    if (!slide.items[idx]) slide.items[idx] = {};
-    slide.items[idx][key] = value;
-    refreshLivePreview();
-}
-
-function updateImageItem(idx, key, value) {
-    const slide = slides[currentSlideIdx];
-    if (!slide.images) slide.images = [];
-    if (!slide.images[idx]) slide.images[idx] = {};
-    slide.images[idx][key] = value;
-    refreshLivePreview();
-}
-
-async function refreshImage() {
-    const slide = slides[currentSlideIdx];
-    const query = slide.imageQuery;
-    if (!query) return;
-    delete imageSearchCache[query];
-    const url = await searchGoogleImage(query);
-    slide._imageUrl = url;
-    refreshLivePreview();
-}
-
-async function refreshImageItem(idx) {
-    const slide = slides[currentSlideIdx];
-    const img   = slide.images[idx];
-    if (!img) return;
-    delete imageSearchCache[img.imageQuery];
-    const url = await searchGoogleImage(img.imageQuery);
-    img._imageUrl = url;
-    refreshLivePreview();
-}
-
-function refreshLivePreview() {
-    const container = document.getElementById('livePreview');
-    if (!container) return;
-    container.innerHTML = buildSlidePreviewHTML(slides[currentSlideIdx]);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// SLIDE PREVIEW HTML (the little in-app preview)
-// ─────────────────────────────────────────────────────────────────────────────
-function buildSlidePreviewHTML(slide) {
-    const content = buildSlidePreviewContent(slide);
-    return `
+    // Shared frame wrapper
+    const frame = (content, hasHeader = true) => `
         <div class="slide-frame">
+            ${hasHeader ? `
             <div class="sf-header">
                 <div class="sf-title-bar">
-                    <span class="sf-title-text">${escHtml(slide.title || slide.personName || 'RENTEASE')}</span>
+                    <span class="sf-title-text" id="previewTitle">
+                        ${escapeHtml(slide.title) || 'SLIDE TITLE'}
+                    </span>
                 </div>
-                <img src="assets/logo.png" class="sf-logo" alt="Rentease Logo" onerror="this.style.display='none'">
-            </div>
+                <img src="assets/logo.png" alt="Logo" class="sf-logo">
+            </div>` : ''}
             <div class="sf-body">
-                ${content}
+                <div class="sf-content" style="flex:1; padding:8px;">
+                    ${content}
+                </div>
+                ${hasHeader ? `
+                <div class="sf-equip-sidebar">
+                    <div class="sf-equip-icon"><img src="assets/icons/icon1.png"></div>
+<div class="sf-equip-icon"><img src="assets/icons/icon2.png"></div>
+<div class="sf-equip-icon"><img src="assets/icons/icon3.png"></div>
+<div class="sf-equip-icon"><img src="assets/icons/icon4.png"></div>
+<div class="sf-equip-icon"><img src="assets/icons/icon5.png"></div>
+<div class="sf-equip-icon"><img src="assets/icons/icon6.png"></div>
+                </div>` : ''}
             </div>
             <div class="sf-footer">
-                <span class="sf-footer-text"><span class="red">Rentease</span> Limited — Powered by trust.</span>
+                <span class="sf-footer-text">
+                    <span class="red">RENT</span>EASE LIMITED
+                </span>
             </div>
         </div>
     `;
-}
 
-function buildSlidePreviewContent(slide) {
     switch (slide.layout) {
-        case 'title':         return previewTitle(slide);
-        case 'image-text':    return previewImageText(slide, false);
-        case 'text-image':    return previewImageText(slide, true);
-        case 'bullets':       return previewBullets(slide);
-        case 'profile-quote': return previewProfile(slide);
-        case 'icon-grid':     return previewIconGrid(slide);
-        case 'four-images':   return previewFourImages(slide);
-        case 'thank-you':     return previewThankYou(slide);
-        default:              return previewBullets(slide);
+
+        // ---- 1. TITLE SLIDE ----
+        case 'title-slide': {
+            const f = slide.fields;
+            return `
+                <div class="slide-frame">
+                    <div style="height:3px; background:var(--color-primary); margin-bottom:6px;"></div>
+                    <div style="background:#DBEAFE; padding:12px; text-align:center; margin-bottom:10px;">
+                        <img src="assets/logo.png" style="height:36px; margin-bottom:6px;">
+                        <div style="font-size:1rem; font-weight:800; letter-spacing:1px;">
+                            <span style="color:var(--color-primary);">RENT</span>
+                            <span style="color:#1A1A1A;">EASE LIMITED</span>
+                        </div>
+                    </div>
+                    <div style="text-align:center; padding:8px; flex:1;">
+                        <p style="font-size:0.85rem; font-weight:700; color:#374151;" id="previewTitle">
+                            ${escapeHtml(f.subtitle) || 'Corporate Presentation'}
+                        </p>
+                    </div>
+                    <div style="border-top:1px solid #E5E7EB; padding:6px; text-align:center; margin-top:auto;">
+                        <span style="font-size:0.6rem; font-weight:700; letter-spacing:2px; color:#374151;">
+                            ${escapeHtml(f.tagline) || 'MAKE THE DIFFERENCE'}
+                        </span>
+                    </div>
+                </div>
+            `;
+        }
+
+        // ---- 2. IMAGE + TEXT ----
+        case 'image-text': {
+            const imageBlocks = slide.blocks.filter(b => b.type === 'image');
+            const textBlocks = slide.blocks.filter(b => b.type !== 'image');
+
+            const imagesHTML = imageBlocks.length === 0
+                ? '<div class="sf-image-placeholder"><span>📷</span></div>'
+                : imageBlocks.map(b => `
+                    <div class="sf-image-item">
+                        <div class="sf-img sf-img-${b.shape} ${b.src ? '' : 'sf-img-empty'}"
+                            style="${b.src ? 'background-image:url('+b.src+')' : ''}">
+                            ${b.src ? '' : '📷'}
+                        </div>
+                        ${b.caption ? `<span class="sf-img-caption">${escapeHtml(b.caption)}</span>` : ''}
+                    </div>`).join('');
+
+            const textHTML = textBlocks.length === 0
+                ? '<p class="sf-text sf-placeholder-text">Content will appear here...</p>'
+                : textBlocks.map(b => b.type === 'bullet'
+                    ? `<p class="sf-text sf-bullet">• ${escapeHtml(b.text)}</p>`
+                    : `<p class="sf-text">${escapeHtml(b.text)}</p>`).join('');
+
+            return frame(`
+                <div style="display:flex; gap:12px; height:100%; align-items:center;">
+                    <div class="sf-left" id="previewImages" style="flex:0 0 38%;">${imagesHTML}</div>
+                    <div class="sf-right" id="previewTextArea" style="flex:1;">${textHTML}</div>
+                </div>
+            `);
+        }
+
+        // ---- 3. ICON GRID ----
+        case 'icon-grid': {
+            const icons = slide.blocks.filter(b => b.type === 'icon');
+            const iconsHTML = icons.length === 0
+                ? '<p class="sf-placeholder-text" style="font-size:0.65rem; text-align:center;">Add icons using the editor below</p>'
+                : `<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(50px, 1fr)); gap:8px; padding:4px;">
+                    ${icons.map(b => `
+                        <div style="display:flex; flex-direction:column; align-items:center; gap:3px;">
+                            ${b.src
+                                ? `<img src="${b.src}" style="width:36px; height:36px; object-fit:contain; border:1px solid #E5E7EB; border-radius:4px;">`
+                                : `<div style="width:36px; height:36px; background:#F3F4F6; border:1px solid #E5E7EB; border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:1rem;">🔷</div>`
+                            }
+                            <span style="font-size:0.5rem; font-weight:600; color:#374151; text-align:center;">${escapeHtml(b.label || '')}</span>
+                        </div>
+                    `).join('')}
+                  </div>`;
+
+            return frame(iconsHTML);
+        }
+
+        // ---- 4. TEXT + IMAGE ----
+        case 'text-image': {
+            const imageBlocks = slide.blocks.filter(b => b.type === 'image');
+            const textBlocks = slide.blocks.filter(b => b.type !== 'image');
+
+            const imagesHTML = imageBlocks.length === 0
+                ? '<div class="sf-image-placeholder"><span>📷</span></div>'
+                : imageBlocks.map(b => `
+                    <div class="sf-image-item">
+                        <div class="sf-img sf-img-${b.shape} ${b.src ? '' : 'sf-img-empty'}"
+                            style="${b.src ? 'background-image:url('+b.src+')' : ''}">
+                            ${b.src ? '' : '📷'}
+                        </div>
+                        ${b.caption ? `<span class="sf-img-caption">${escapeHtml(b.caption)}</span>` : ''}
+                    </div>`).join('');
+
+            const textHTML = textBlocks.length === 0
+                ? '<p class="sf-text sf-placeholder-text">Content will appear here...</p>'
+                : textBlocks.map(b => b.type === 'bullet'
+                    ? `<p class="sf-text sf-bullet">• ${escapeHtml(b.text)}</p>`
+                    : `<p class="sf-text">${escapeHtml(b.text)}</p>`).join('');
+
+            return frame(`
+                <div style="display:flex; gap:12px; height:100%; align-items:center;">
+                    <div class="sf-left" id="previewTextArea" style="flex:1;">${textHTML}</div>
+                    <div class="sf-right" id="previewImages" style="flex:0 0 38%;">${imagesHTML}</div>
+                </div>
+            `);
+        }
+
+        // ---- 5. PROFILE / QUOTE ----
+        case 'profile-quote': {
+            const f = slide.fields;
+            const textBlocks = slide.blocks;
+            const textHTML = textBlocks.length === 0
+                ? '<p class="sf-placeholder-text" style="font-size:0.6rem;">Add content using editor below...</p>'
+                : textBlocks.map(b => b.type === 'bullet'
+                    ? `<p class="sf-text sf-bullet">• ${escapeHtml(b.text)}</p>`
+                    : `<p class="sf-text">${escapeHtml(b.text)}</p>`).join('');
+
+            return frame(`
+                ${f.quoteHighlight ? `
+                    <div style="background:#FEF3C7; padding:5px 8px; border-radius:3px; margin-bottom:8px; font-size:0.6rem; font-style:italic; font-weight:600; color:#92400E;">
+                        "${escapeHtml(f.quoteHighlight)}"
+                    </div>` : ''}
+                <div style="display:flex; gap:12px; align-items:flex-start; flex:1;">
+                    <div style="flex:0 0 30%; display:flex; flex-direction:column; align-items:center; gap:4px;">
+                        ${f.photo
+                            ? `<img src="${f.photo}" style="width:60px; height:60px; border-radius:50%; object-fit:cover; border:2px solid var(--color-primary);">`
+                            : `<div style="width:60px; height:60px; border-radius:50%; background:#FEE2E2; border:2px solid var(--color-primary); display:flex; align-items:center; justify-content:center; font-size:1.5rem;">👤</div>`
+                        }
+                        <span style="font-size:0.55rem; font-weight:700; text-align:center;">${escapeHtml(f.personName || '')}</span>
+                        <span style="font-size:0.5rem; color:#6B7280; text-align:center;">${escapeHtml(f.personRole || '')}</span>
+                    </div>
+                    <div style="flex:1;" id="previewTextArea">${textHTML}</div>
+                </div>
+            `);
+        }
+
+        // ---- 6. IMAGE SHOWCASE ----
+        case 'image-showcase': {
+            const images = slide.blocks.filter(b => b.type === 'image');
+            const showcaseHTML = images.length === 0
+                ? '<p class="sf-placeholder-text" style="font-size:0.65rem; text-align:center;">Add images using the editor below</p>'
+                : `<div style="display:flex; gap:8px; align-items:center; justify-content:center; height:100%;">
+                    ${images.map(b => `
+                        <div style="display:flex; flex-direction:column; align-items:center; gap:4px; flex:1;">
+                            ${b.src
+                                ? `<img src="${b.src}" style="width:100%; height:80px; object-fit:cover; border-radius:6px; border:1px solid #E5E7EB;">`
+                                : `<div style="width:100%; height:80px; background:#F3F4F6; border:1px solid #E5E7EB; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:1.5rem;">📷</div>`
+                            }
+                            ${b.caption ? `<span style="font-size:0.5rem; font-weight:600; text-align:center;">${escapeHtml(b.caption)}</span>` : ''}
+                        </div>
+                    `).join('')}
+                  </div>`;
+
+            return frame(showcaseHTML);
+        }
+
+        // ---- 7. IMAGE GRID + LABELS ----
+        case 'image-grid-labels': {
+            const cells = slide.fields.cells || [{},{},{},{}];
+            return frame(`
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; height:100%;">
+                    ${cells.map(cell => `
+                        <div style="display:flex; align-items:center; gap:6px; background:#F9FAFB; border-radius:4px; padding:6px; overflow:hidden;">
+                            ${cell.src
+                                ? `<img src="${cell.src}" style="width:50px; height:50px; object-fit:cover; border-radius:4px; flex-shrink:0;">`
+                                : `<div style="width:50px; height:50px; background:#E5E7EB; border-radius:4px; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:1rem;">📷</div>`
+                            }
+                            <div style="background:#3B82F6; color:white; padding:4px 8px; border-radius:3px; font-size:0.55rem; font-weight:600;">
+                                ${escapeHtml(cell.label || 'Label')}
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+            `);
+        }
+
+        // ---- 8. EQUIPMENT COMPARISON ----
+        case 'equipment-comparison': {
+            const f = slide.fields;
+            const mkBullets = (arr) => (arr||[]).map(b =>
+                b ? `<p style="font-size:0.55rem; color:#374151; margin-bottom:2px;">• ${escapeHtml(b)}</p>` : ''
+            ).join('');
+
+            return frame(`
+                <div style="display:flex; gap:8px; height:100%; align-items:flex-start;">
+                    <div style="flex:1; display:flex; flex-direction:column; align-items:center; gap:4px;">
+                        ${f.leftImage
+                            ? `<img src="${f.leftImage}" style="width:100%; height:60px; object-fit:cover; border-radius:4px;">`
+                            : `<div style="width:100%; height:60px; background:#F3F4F6; border:1px solid #E5E7EB; border-radius:4px; display:flex; align-items:center; justify-content:center;">📷</div>`
+                        }
+                        ${mkBullets(f.leftBullets)}
+                    </div>
+                    <div style="flex:1.2; display:flex; flex-direction:column; align-items:center; gap:4px;">
+                        ${f.centerTitle ? `<div style="background:var(--color-primary); color:white; padding:3px 10px; border-radius:3px; font-size:0.6rem; font-weight:700;">${escapeHtml(f.centerTitle)}</div>` : ''}
+                        ${f.centerDesc ? `<p style="font-size:0.55rem; color:#374151; text-align:center;">${escapeHtml(f.centerDesc)}</p>` : ''}
+                    </div>
+                    <div style="flex:1; display:flex; flex-direction:column; align-items:center; gap:4px;">
+                        ${f.rightImage
+                            ? `<img src="${f.rightImage}" style="width:100%; height:60px; object-fit:cover; border-radius:4px;">`
+                            : `<div style="width:100%; height:60px; background:#F3F4F6; border:1px solid #E5E7EB; border-radius:4px; display:flex; align-items:center; justify-content:center;">📷</div>`
+                        }
+                        ${mkBullets(f.rightBullets)}
+                    </div>
+                </div>
+            `);
+        }
+
+        // ---- 9. THANK YOU ----
+        case 'thank-you': {
+            const f = slide.fields;
+            return `
+                <div class="slide-frame">
+                    <div style="height:2px; background:var(--color-primary); margin-bottom:8px;"></div>
+                    <div style="display:flex; gap:16px; flex:1; align-items:center; padding:8px;">
+                        <div style="flex:0 0 100px; height:80px; background:linear-gradient(135deg,#3B82F6,#1D4ED8); border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:2rem;">🤝</div>
+                        <div style="flex:1; display:flex; flex-direction:column; gap:6px;">
+                            <p style="font-size:0.7rem; color:#374151; display:flex; gap:6px; align-items:flex-start;">
+                                <span>🏠</span>
+                                <span>${escapeHtml(f.address || '705-706, The Landmark...')}</span>
+                            </p>
+                            <p style="font-size:0.7rem; color:#374151; display:flex; gap:6px;">
+                                <span>📞</span>
+                                <span>${escapeHtml(f.phone || '+91 22 2774 7458')}</span>
+                            </p>
+                            <p style="font-size:0.7rem; color:#374151; display:flex; gap:6px;">
+                                <span>✉️</span>
+                                <span>${escapeHtml(f.email || 'info@rentease.co')}</span>
+                            </p>
+                        </div>
+                    </div>
+                    <div style="border-top:1px dashed #93C5FD; padding-top:6px; margin-top:auto;">
+                        <span class="sf-footer-text"><span class="red">RENT</span>EASE LIMITED</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        default:
+            return '<div class="slide-frame"><p style="padding:20px; color:#9CA3AF;">Preview not available</p></div>';
     }
 }
 
-function previewTitle(s) {
-    return `<div class="sf-content" style="display:flex;flex-direction:column;justify-content:center;text-align:center;padding:24px;">
-        <div style="font-size:1.6rem;font-weight:800;color:${CSS_DARK};margin-bottom:12px;">${escHtml(s.title||'Title')}</div>
-        <div style="font-size:0.9rem;color:#6B7280;">${escHtml(s.subtitle||'')}</div>
-        <div style="margin-top:16px;width:60px;height:4px;background:${CSS_RED};border-radius:2px;margin-left:auto;margin-right:auto;"></div>
-    </div>`;
+// ============================================
+// 8. PREVIEW UPDATER (live update without re-render)
+// ============================================
+
+function updateSlidePreview() {
+    const slide = getActiveSlide();
+    if (!slide) return;
+
+    // For complex layouts, just re-render the whole preview
+    const previewEl = document.getElementById('slidePreview');
+    if (previewEl) {
+        previewEl.innerHTML = getSlidePreviewHTML(slide);
+    }
 }
 
-function previewBullets(s) {
-    const bullets = (s.bullets || []).map(function (b) {
-        return `<div class="sf-text sf-bullet">• ${escHtml(b)}</div>`;
-    }).join('');
-    return `<div class="sf-content" style="padding:8px 16px;">
-        ${bullets}
-    </div>`;
-}
+// ============================================
+// 9. STEP 2 RENDERER
+// ============================================
 
-function previewImageText(s, flip) {
-    const imgStyle = s._imageUrl
-        ? `background-image:url('${s._imageUrl}');background-size:cover;background-position:center;`
-        : 'background:#F3F4F6;display:flex;align-items:center;justify-content:center;font-size:1.5rem;';
-    const imgContent = s._imageUrl ? '' : '🏗️';
-    const bullets    = (s.bullets || []).map(function (b) {
-        return `<div class="sf-text sf-bullet">• ${escHtml(b)}</div>`;
-    }).join('');
+function renderStep2() {
+    if (presentation.slides.length === 0) {
+        mainContent.innerHTML = `
+            <h2>Edit Slides</h2>
+            <p class="subtitle">Your presentation is empty</p>
+            <div class="editor-placeholder">
+                <div class="placeholder-icon">☝️</div>
+                <p>Go to Step 1 and add some slides to your presentation.</p>
+            </div>
+        `;
+        return;
+    }
 
-    const imgBlock = `<div class="sf-left">
-        <div style="${imgStyle}width:100%;height:100px;border-radius:6px;overflow:hidden;">${imgContent}</div>
-    </div>`;
-    const txtBlock = `<div class="sf-right" style="padding:8px;">${bullets}</div>`;
+    let slideListHTML = '';
+    presentation.slides.forEach(function(slide, index) {
+        const isActive = slide.id === activeSlideId;
+        slideListHTML += `
+            <div class="slide-thumb ${isActive ? 'active' : ''}" onclick="selectSlide('${slide.id}')">
+                <span class="slide-thumb-number">${index + 1}</span>
+                <div class="slide-thumb-info">
+                    <span class="slide-thumb-layout">${layoutNames[slide.layout]}</span>
+                    <span class="slide-thumb-title">${escapeHtml(slide.title) || 'Untitled'}</span>
+                </div>
+                <div class="slide-thumb-actions">
+                    <button class="thumb-btn" onclick="event.stopPropagation(); moveSlide('${slide.id}', -1)">▲</button>
+                    <button class="thumb-btn" onclick="event.stopPropagation(); moveSlide('${slide.id}', 1)">▼</button>
+                    <button class="thumb-btn thumb-btn-delete" onclick="event.stopPropagation(); removeSlide('${slide.id}')">✕</button>
+                </div>
+            </div>
+        `;
+    });
 
-    return flip ? txtBlock + imgBlock : imgBlock + txtBlock;
-}
+    const slide = getActiveSlide();
 
-function previewProfile(s) {
-    return `<div class="sf-body" style="display:flex;gap:12px;padding:8px;">
-        <div style="flex:0 0 80px;display:flex;flex-direction:column;align-items:center;gap:6px;">
-            <div style="width:56px;height:56px;border-radius:50%;border:2px solid ${CSS_RED};background:#FEE2E2;display:flex;align-items:center;justify-content:center;font-size:1.4rem;">👤</div>
-            <div style="font-size:0.6rem;font-weight:700;text-align:center;">${escHtml(s.personName||'')}</div>
-            <div style="font-size:0.55rem;color:#6B7280;text-align:center;">${escHtml(s.personRole||'')}</div>
+    mainContent.innerHTML = `
+        <h2>Edit Slides</h2>
+        <p class="subtitle">${presentation.slides.length} slide${presentation.slides.length > 1 ? 's' : ''} in your presentation</p>
+        <div class="step2-layout">
+            <div class="slide-list-panel">
+                ${slideListHTML}
+                <button class="add-slide-btn" onclick="goToStep1()">+ Add Slide</button>
+            </div>
+            <div class="editor-area">
+                ${slide ? getEditorHTML(slide) : ''}
+            </div>
         </div>
-        <div style="flex:1;">
-            <div style="font-size:0.75rem;font-style:italic;color:#374151;margin-bottom:8px;padding:8px;background:#F9FAFB;border-left:3px solid ${CSS_RED};border-radius:0 4px 4px 0;">"${escHtml(s.quoteHighlight||'')}"</div>
-            ${(s.bullets||[]).map(function(b){ return `<div class="sf-text sf-bullet">• ${escHtml(b)}</div>`;}).join('')}
-        </div>
-    </div>`;
+    `;
+
+    // Restore field values
+    if (slide) {
+        const titleInput = document.getElementById('slideTitle');
+        if (titleInput) titleInput.value = slide.title;
+
+        if (slide.layout === 'title-slide') {
+            setVal('f_companyName', slide.fields.companyName);
+            setVal('f_subtitle', slide.fields.subtitle);
+            setVal('f_tagline', slide.fields.tagline);
+        }
+        if (slide.layout === 'thank-you') {
+            setVal('f_address', slide.fields.address);
+            setVal('f_phone', slide.fields.phone);
+            setVal('f_email', slide.fields.email);
+        }
+        if (slide.layout === 'profile-quote') {
+            setVal('f_personName', slide.fields.personName);
+            setVal('f_personRole', slide.fields.personRole);
+            setVal('f_quoteHighlight', slide.fields.quoteHighlight);
+        }
+    }
 }
 
-function previewIconGrid(s) {
-    const items = (s.items || []).slice(0, 6);
-    const cells = items.map(function (item) {
-        return `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;padding:4px;background:#F9FAFB;border-radius:6px;">
-            <div style="font-size:1rem;">${item.icon||'⚡'}</div>
-            <div style="font-size:0.55rem;font-weight:700;color:${CSS_DARK};text-align:center;">${escHtml(item.label||'')}</div>
-            <div style="font-size:0.5rem;color:#6B7280;text-align:center;">${escHtml(item.desc||'')}</div>
-        </div>`;
-    }).join('');
-    return `<div class="sf-content">
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:4px;">${cells}</div>
-    </div>`;
+function setVal(id, value) {
+    const el = document.getElementById(id);
+    if (el && value) el.value = value;
 }
 
-function previewFourImages(s) {
-    const images = (s.images || []).slice(0, 4);
-    const cells  = images.map(function (img) {
-        const bg = img._imageUrl
-            ? `background-image:url('${img._imageUrl}');background-size:cover;background-position:center;`
-            : 'background:#E5E7EB;';
-        return `<div style="display:flex;flex-direction:column;gap:4px;">
-            <div style="${bg}height:60px;border-radius:4px;"></div>
-            <div style="font-size:0.55rem;font-weight:600;color:#374151;text-align:center;">${escHtml(img.label||'')}</div>
-        </div>`;
-    }).join('');
-    return `<div class="sf-content">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:4px;">${cells}</div>
-    </div>`;
+// ============================================
+// 10. SIDEBAR STATUS
+// ============================================
+
+function updateSidebarStatus() {
+    const count = presentation.slides.length;
+    const badge = document.getElementById('slideBadge');
+    const panel = document.getElementById('resumePanel');
+    const info = document.getElementById('resumeInfo');
+
+    if (badge) {
+        if (count > 0) {
+            badge.textContent = count;
+            badge.classList.add('visible');
+        } else {
+            badge.classList.remove('visible');
+        }
+    }
+
+    if (panel) {
+        panel.style.display = count > 0 ? 'flex' : 'none';
+    }
+
+    if (info) {
+        info.textContent = count + ' slide' + (count > 1 ? 's' : '');
+    }
 }
 
-function previewThankYou(s) {
-    return `<div class="sf-content" style="display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;gap:6px;padding:16px;">
-        <div style="font-size:1.4rem;font-weight:800;color:${CSS_DARK};">${escHtml(s.title||'Thank You')}</div>
-        <div style="font-size:0.75rem;color:#6B7280;">${escHtml(s.subtitle||'')}</div>
-        <div style="margin:8px 0;width:40px;height:3px;background:${CSS_RED};border-radius:2px;"></div>
-        <div style="font-size:0.65rem;color:#374151;">${escHtml(s.contactEmail||'')} ${s.contactPhone ? '· '+escHtml(s.contactPhone) : ''}</div>
-        <div style="font-size:0.65rem;color:#6B7280;">${escHtml(s.website||'www.rentease.in')}</div>
-    </div>`;
+// ============================================
+// 11. NAVIGATION
+// ============================================
+
+function goToStep1() {
+    document.querySelector('[data-step="1"]').click();
 }
+// ============================================
+// STEP 3: PREVIEW / SLIDESHOW
+// ============================================
 
-// ─────────────────────────────────────────────────────────────────────────────
-// STEP 3 — Preview
-// ─────────────────────────────────────────────────────────────────────────────
-function renderStep3(main) {
-    main.classList.remove('gamma-step');
-    previewSlideIdx = 0;
+function renderStep3() {
 
-    main.innerHTML = `
-        <h2 style="margin-bottom:20px;">Preview</h2>
+    if (presentation.slides.length === 0) {
+        mainContent.innerHTML = `
+            <h2>Preview</h2>
+            <p class="subtitle">No slides to preview</p>
+            <div class="editor-placeholder">
+                <div class="placeholder-icon">🖼️</div>
+                <p>Add some slides in Step 2 first, then come back to preview.</p>
+            </div>
+        `;
+        return;
+    }
+
+    currentPreviewIndex = Math.max(0, Math.min(currentPreviewIndex, presentation.slides.length - 1));
+
+    const total = presentation.slides.length;
+    const slide = presentation.slides[currentPreviewIndex];
+
+    const dotsHTML = presentation.slides.map((s, i) => `
+        <button 
+            class="preview-dot ${i === currentPreviewIndex ? 'active' : ''}" 
+            onclick="goToPreviewSlide(${i})"
+            title="${layoutNames[s.layout]}"
+        ></button>
+    `).join('');
+
+    mainContent.innerHTML = `
         <div class="preview-screen">
+
             <div class="preview-topbar">
-                <span class="preview-counter">Slide <strong id="previewCurrent">1</strong> of <strong>${slides.length}</strong></span>
+                <div class="preview-counter">
+                    Slide <strong>${currentPreviewIndex + 1}</strong> of <strong>${total}</strong>
+                    &mdash; ${layoutNames[slide.layout]}
+                </div>
                 <div class="preview-nav-btns">
-                    <button class="preview-nav-btn" id="prevBtn" onclick="previewNav(-1)">← Prev</button>
-                    <button class="preview-nav-btn" id="nextBtn" onclick="previewNav(1)">Next →</button>
+                    <button class="preview-nav-btn" onclick="previewMoveSlide(-1)"
+                        title="Move slide left"
+                        ${currentPreviewIndex === 0 ? 'disabled' : ''}>⬅ Move</button>
+
+                    <button class="preview-nav-btn" onclick="previewMoveSlide(1)"
+                        title="Move slide right"
+                        ${currentPreviewIndex === total - 1 ? 'disabled' : ''}>Move ➡</button>
+
                     <div class="preview-btn-divider"></div>
-                    <button class="preview-nav-btn primary" onclick="goToStep(4)">Export →</button>
-                    <button class="preview-nav-btn danger" onclick="goToStep(2)">✏️ Edit</button>
+
+                    <button class="preview-nav-btn danger" onclick="previewDeleteSlide()"
+                        title="Delete this slide">🗑 Delete</button>
+
+                    <div class="preview-btn-divider"></div>
+
+                    <button class="preview-nav-btn" onclick="prevPreviewSlide()"
+                        ${currentPreviewIndex === 0 ? 'disabled' : ''}>◀ Prev</button>
+
+                    <button class="preview-nav-btn primary" onclick="nextPreviewSlide()"
+                        ${currentPreviewIndex === total - 1 ? 'disabled' : ''}>Next ▶</button>
                 </div>
             </div>
 
             <div class="preview-slide-wrapper">
-                <div class="preview-slide-canvas" id="previewCanvas"></div>
+                <div class="preview-slide-canvas">
+                    ${getSlidePreviewHTML(slide)}
+                </div>
             </div>
 
-            <div class="preview-dots" id="previewDots"></div>
-            <div class="preview-hint">Use ← → arrow keys to navigate</div>
+            <div class="preview-dots">
+                ${dotsHTML}
+            </div>
+
+            <p class="preview-hint">💡 Use ← → arrow keys to navigate</p>
+
         </div>
     `;
-
-    renderPreviewSlide();
-    renderPreviewDots();
-    setupPreviewKeyboard();
 }
 
-function renderPreviewSlide() {
-    const canvas = document.getElementById('previewCanvas');
-    if (!canvas) return;
-    const slide  = slides[previewSlideIdx];
-    if (!slide) return;
+function previewMoveSlide(direction) {
+    const slide = presentation.slides[currentPreviewIndex];
+    moveSlide(slide.id, direction);
+    currentPreviewIndex = currentPreviewIndex + direction;
+    renderStep3();
+}
 
-    canvas.innerHTML = buildSlidePreviewHTML(slide);
+function previewDeleteSlide() {
+    if (!confirm('Delete this slide? This cannot be undone.')) return;
+    const slide = presentation.slides[currentPreviewIndex];
+    removeSlide(slide.id);
+    currentPreviewIndex = Math.max(0, currentPreviewIndex - 1);
+    renderStep3();
+}
 
-    const counter = document.getElementById('previewCurrent');
-    if (counter) counter.textContent = previewSlideIdx + 1;
+function goToPreviewSlide(index) {
+    currentPreviewIndex = index;
+    renderStep3();
+}
 
-    const prevBtn = document.getElementById('prevBtn');
-    const nextBtn = document.getElementById('nextBtn');
-    if (prevBtn) prevBtn.disabled = previewSlideIdx === 0;
-    if (nextBtn) nextBtn.disabled = previewSlideIdx === slides.length - 1;
+function nextPreviewSlide() {
+    if (currentPreviewIndex < presentation.slides.length - 1) {
+        currentPreviewIndex++;
+        renderStep3();
+    }
+}
 
-    // Update active dot
-    document.querySelectorAll('.preview-dot').forEach(function (d, i) {
-        d.classList.toggle('active', i === previewSlideIdx);
+function prevPreviewSlide() {
+    if (currentPreviewIndex > 0) {
+        currentPreviewIndex--;
+        renderStep3();
+    }
+}
+function previewMoveSlide(direction) {
+    const slide = presentation.slides[currentPreviewIndex];
+    moveSlide(slide.id, direction);
+    // Stay on the same slide after moving
+    currentPreviewIndex = currentPreviewIndex + direction;
+    renderStep3();
+}
+
+function previewDeleteSlide() {
+    if (!confirm('Delete this slide? This cannot be undone.')) return;
+
+    const slide = presentation.slides[currentPreviewIndex];
+    removeSlide(slide.id);
+
+    // After delete, stay on same index (now pointing to next slide)
+    // removeSlide() already adjusts activeSlideId — we just re-render
+    currentPreviewIndex = Math.max(0, currentPreviewIndex - 1);
+    renderStep3();
+}
+
+// Keyboard navigation — arrow keys
+// CONCEPT: document-level event listener
+// We attach this once to the whole document.
+// But we only respond when the user is on Step 3.
+// We track this using a flag: isPreviewActive
+let isPreviewActive = false;
+
+document.addEventListener('keydown', function(event) {
+    if (!isPreviewActive) return;
+
+    if (event.key === 'ArrowRight') {
+        nextPreviewSlide();
+    } else if (event.key === 'ArrowLeft') {
+        prevPreviewSlide();
+    }
+});
+
+navItems.forEach(function(item) {
+    item.addEventListener('click', function() {
+        navItems.forEach(nav => nav.classList.remove('active'));
+        item.classList.add('active');
+        const step = item.getAttribute('data-step');
+
+        if (step === '1') {
+            isPreviewActive = false;
+            mainContent.innerHTML = step1Content;
+            mainContent.classList.add('gamma-step');
+            initParticles(); // restart particle animation when returning to step 1
+        } else if (step === '2') {
+            isPreviewActive = false;          // ← ADD
+            renderStep2();
+        } else if (step === '3') {
+            currentPreviewIndex = 0;          // ← ADD (always start from slide 1)
+            isPreviewActive = true;           // ← ADD
+            renderStep3();
+        } else if (step === '4') {
+            isPreviewActive = false;
+            renderStep4();    // ← replace mainContent.innerHTML = stepContent[4];
+        }
+    });
+});
+mainContent.addEventListener('click', function(event) {
+    const card = event.target.closest('.layout-card');
+    if (!card) return;
+
+    const allCards = mainContent.querySelectorAll('.layout-card');
+    allCards.forEach(c => c.classList.remove('selected'));
+    card.classList.add('selected');
+
+    selectedLayout = card.getAttribute('data-layout');
+    addSlide(selectedLayout);
+
+    setTimeout(function() {
+        document.querySelector('[data-step="2"]').click();
+    }, 300);
+});
+
+// ============================================
+// 12. UTILITIES
+// ============================================
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text || '';
+    return div.innerHTML;
+}
+// ============================================
+// AUTO-SAVE & RESTORE
+// ============================================
+
+function savePresentation() {
+    try {
+        const toSave = JSON.parse(JSON.stringify(presentation));
+
+        // Strip temporary blob URLs before saving
+        toSave.slides.forEach(function(slide) {
+            slide.blocks.forEach(function(block) {
+                if (block.imageKey) block.src = '';
+            });
+            Object.keys(slide.fields).forEach(function(key) {
+                if (key.endsWith('_key')) return;
+                if (slide.fields[key + '_key']) slide.fields[key] = '';
+            });
+            if (slide.fields.cells) {
+                slide.fields.cells.forEach(function(cell) {
+                    if (cell.imageKey) cell.src = '';
+                });
+            }
+        });
+
+        localStorage.setItem('rentease_ppt', JSON.stringify(toSave));
+        localStorage.setItem('rentease_counters', JSON.stringify({
+            slideCounter: slideCounter,
+            blockCounter: blockCounter,
+            activeSlideId: activeSlideId
+        }));
+
+        showSaveIndicator();
+    } catch(e) {
+        console.warn('Save failed:', e);
+    }
+}
+
+function loadPresentation() {
+    try {
+        const savedPPT = localStorage.getItem('rentease_ppt');
+        const savedCounters = localStorage.getItem('rentease_counters');
+
+        if (savedPPT) presentation = JSON.parse(savedPPT);
+
+        if (savedCounters) {
+            const c = JSON.parse(savedCounters);
+            slideCounter = c.slideCounter || 0;
+            blockCounter = c.blockCounter || 0;
+            activeSlideId = c.activeSlideId || null;
+        }
+
+        restoreImages();
+    } catch(e) {
+        console.warn('Could not restore session:', e);
+    }
+}
+
+function restoreImages() {
+    const promises = [];
+
+    presentation.slides.forEach(function(slide) {
+        slide.blocks.forEach(function(block) {
+            if (block.imageKey) {
+                const p = dbLoadImage(block.imageKey).then(function(url) {
+                    if (url) block.src = url;
+                });
+                promises.push(p);
+            }
+        });
+
+        Object.keys(slide.fields).forEach(function(key) {
+            if (key.endsWith('_key')) {
+                const imageKey = slide.fields[key];
+                const fieldName = key.replace('_key', '');
+                const p = dbLoadImage(imageKey).then(function(url) {
+                    if (url) slide.fields[fieldName] = url;
+                });
+                promises.push(p);
+            }
+        });
+
+        if (slide.fields.cells) {
+            slide.fields.cells.forEach(function(cell) {
+                if (cell.imageKey) {
+                    const p = dbLoadImage(cell.imageKey).then(function(url) {
+                        if (url) cell.src = url;
+                    });
+                    promises.push(p);
+                }
+            });
+        }
+    });
+
+    Promise.all(promises).then(function() {
+        updateSidebarStatus();
     });
 }
 
-function renderPreviewDots() {
-    const dotsEl = document.getElementById('previewDots');
-    if (!dotsEl) return;
-    dotsEl.innerHTML = slides.map(function (_, i) {
-        return `<button class="preview-dot ${i === previewSlideIdx ? 'active' : ''}" onclick="previewJump(${i})"></button>`;
-    }).join('');
+function clearPresentation() {
+    if (!confirm('Start a new presentation? All current work will be lost.')) return;
+    localStorage.removeItem('rentease_ppt');
+    localStorage.removeItem('rentease_counters');
+    dbClearAllImages();
+    presentation = { slides: [] };
+    activeSlideId = null;
+    slideCounter = 0;
+    blockCounter = 0;
+    updateSidebarStatus();
+    document.querySelector('[data-step="1"]').click();
 }
 
-function previewNav(dir) {
-    const next = previewSlideIdx + dir;
-    if (next < 0 || next >= slides.length) return;
-    previewSlideIdx = next;
-    renderPreviewSlide();
+function showSaveIndicator() {
+    const indicator = document.getElementById('saveIndicator');
+    if (!indicator) return;
+    indicator.classList.add('visible');
+    setTimeout(function() {
+        indicator.classList.remove('visible');
+    }, 1500);
 }
 
-function previewJump(idx) {
-    previewSlideIdx = idx;
-    renderPreviewSlide();
+function updateSidebarStatus() {
+    const count = presentation.slides.length;
+    const badge = document.getElementById('slideBadge');
+    const panel = document.getElementById('resumePanel');
+    const info = document.getElementById('resumeInfo');
+
+    if (badge) {
+        if (count > 0) {
+            badge.textContent = count;
+            badge.classList.add('visible');
+        } else {
+            badge.classList.remove('visible');
+        }
+    }
+    if (panel) panel.style.display = count > 0 ? 'flex' : 'none';
+    if (info) info.textContent = count + ' slide' + (count > 1 ? 's' : '');
+}
+// ============================================
+// STEP 4: EXPORT
+// ============================================
+
+function countImages() {
+    let count = 0;
+    presentation.slides.forEach(function(slide) {
+        slide.blocks.forEach(function(block) {
+            if (block.type === 'image' && block.src) count++;
+        });
+        if (slide.fields.photo) count++;
+        if (slide.fields.leftImage) count++;
+        if (slide.fields.rightImage) count++;
+        if (slide.fields.cells) {
+            slide.fields.cells.forEach(function(cell) {
+                if (cell.src) count++;
+            });
+        }
+    });
+    return count;
 }
 
-function setupPreviewKeyboard() {
-    document.onkeydown = function (e) {
-        if (currentStep !== 3) return;
-        if (e.key === 'ArrowLeft')  previewNav(-1);
-        if (e.key === 'ArrowRight') previewNav(1);
-    };
-}
+function renderStep4() {
+    if (presentation.slides.length === 0) {
+        mainContent.innerHTML = `
+            <h2>Export</h2>
+            <p class="subtitle">Nothing to export yet</p>
+            <div class="editor-placeholder">
+                <div class="placeholder-icon">📊</div>
+                <p>Add slides in Step 1 and 2 first, then come back to export.</p>
+            </div>
+        `
+        return;
+    }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// STEP 4 — Export
-// ─────────────────────────────────────────────────────────────────────────────
-let selectedFormat = 'pptx';
+    // Build slide list summary
+    let slideSummaryHTML = '';
+    presentation.slides.forEach(function(slide, i) {
+        slideSummaryHTML += `
+            <div class="export-slide-row">
+                <span class="export-slide-num">${i + 1}</span>
+                <span class="export-slide-layout">${layoutNames[slide.layout]}</span>
+                <span class="export-slide-title">${escapeHtml(slide.title) || 'Untitled'}</span>
+            </div>
+        `;
+    });
 
-function renderStep4(main) {
-    main.classList.remove('gamma-step');
+    mainContent.innerHTML = `
+        <h2>Export</h2>
+        <p class="subtitle">Download your presentation as a PowerPoint file</p>
 
-    const slideListHTML = slides.map(function (s, i) {
-        const title = s.title || s.personName || ('Slide ' + (i + 1));
-        return `<div class="export-slide-row">
-            <div class="export-slide-num">${i + 1}</div>
-            <span class="export-slide-layout">${s.layout}</span>
-            <span class="export-slide-title">${escHtml(title)}</span>
-        </div>`;
-    }).join('');
-
-    main.innerHTML = `
-        <h2 style="margin-bottom:24px;">Export</h2>
         <div class="export-container">
+
+            <!-- Summary panel -->
             <div class="export-summary-panel">
                 <div class="export-stats">
                     <div class="export-stat">
-                        <span class="export-stat-num">${slides.length}</span>
+                        <span class="export-stat-num">${presentation.slides.length}</span>
                         <span class="export-stat-label">Slides</span>
                     </div>
                     <div class="export-stat">
@@ -897,528 +1447,1110 @@ function renderStep4(main) {
                         <span class="export-stat-label">Images</span>
                     </div>
                 </div>
+
                 <div class="export-slide-list">
-                    <h4>Slide Overview</h4>
-                    ${slideListHTML}
+                    <h4>Slides in this presentation</h4>
+                    ${slideSummaryHTML}
                 </div>
             </div>
 
+            <!-- Export action panel -->
             <div class="export-action-panel">
                 <div class="export-formats">
-                    <div class="export-format-card active-format" id="fmt_pptx" onclick="selectFormat('pptx')">
-                        <div class="export-format-icon">📊</div>
-                        <div class="export-format-info">
-                            <strong>PowerPoint (.pptx)</strong>
-                            <p>Editable in Microsoft PowerPoint &amp; Google Slides</p>
-                        </div>
-                        <span class="format-check" id="check_pptx">✓</span>
-                    </div>
-                    <div class="export-format-card" id="fmt_pdf" onclick="selectFormat('pdf')">
-                        <div class="export-format-icon">📄</div>
-                        <div class="export-format-info">
-                            <strong>PDF Document</strong>
-                            <p>Universal format, perfect for sharing</p>
-                        </div>
-                        <span class="format-check" id="check_pdf" style="display:none;">✓</span>
-                    </div>
+    <div class="export-format-card active-format" id="formatPPTX"
+        onclick="selectFormat('pptx')">
+        <div class="export-format-icon">📊</div>
+        <div class="export-format-info">
+            <strong>PowerPoint (.pptx)</strong>
+            <p>Opens in Microsoft PowerPoint, Google Slides, LibreOffice</p>
+        </div>
+        <span class="format-check" id="checkPPTX">✓</span>
+    </div>
+
+    <div class="export-format-card" id="formatPDF"
+        onclick="selectFormat('pdf')">
+        <div class="export-format-icon">📄</div>
+        <div class="export-format-info">
+            <strong>PDF (.pdf)</strong>
+            <p>Universal format — opens on any device without PowerPoint</p>
+        </div>
+        <span class="format-check" id="checkPDF" style="display:none;">✓</span>
+    </div>
+</div>
+
+                <div class="form-group">
+                    <label>Presentation File Name</label>
+                    <input type="text" id="exportFilename"
+                        value="Rentease_Presentation"
+                        placeholder="Rentease_Presentation">
                 </div>
 
-                <button class="export-btn" id="exportBtn" onclick="runExport()">
-                    ⬇ Download Presentation
+                <button class="export-btn" id="exportBtn" onclick="handleExport()">
+                    ⬇ Download PowerPoint
                 </button>
-                <p class="export-hint">Your slides will be packaged with all content and branding.</p>
+
+
+                <p class="export-hint">
+                    💡 The file will download automatically to your Downloads folder
+                </p>
             </div>
+
         </div>
     `;
 }
 
-function countImages() {
-    let n = 0;
-    slides.forEach(function (s) {
-        if (s._imageUrl) n++;
-        if (s.images) s.images.forEach(function (img) { if (img._imageUrl) n++; });
-    });
-    return n;
-}
+// ============================================
+// PPTX EXPORT ENGINE
+// ============================================
+// Track selected format
+let selectedExportFormat = 'pptx';
 
-function selectFormat(fmt) {
-    selectedFormat = fmt;
-    ['pptx', 'pdf'].forEach(function (f) {
-        document.getElementById('fmt_' + f).classList.toggle('active-format', f === fmt);
-        const chk = document.getElementById('check_' + f);
-        if (chk) chk.style.display = f === fmt ? '' : 'none';
-    });
-}
+function selectFormat(format) {
+    selectedExportFormat = format;
 
-async function runExport() {
+    // Update card styles
+    document.getElementById('formatPPTX').classList.toggle('active-format', format === 'pptx');
+    document.getElementById('formatPDF').classList.toggle('active-format', format === 'pdf');
+
+    // Update checkmarks
+    document.getElementById('checkPPTX').style.display = format === 'pptx' ? 'block' : 'none';
+    document.getElementById('checkPDF').style.display = format === 'pdf' ? 'block' : 'none';
+
+    // Update button label
     const btn = document.getElementById('exportBtn');
+    if (btn) {
+        btn.textContent = format === 'pptx'
+            ? '⬇ Download PowerPoint'
+            : '⬇ Download PDF';
+    }
+}
+
+function handleExport() {
+    if (selectedExportFormat === 'pdf') {
+        exportToPDF();
+    } else {
+        exportToPPTX();
+    }
+}
+async function exportToPPTX() {
+
+    const btn = document.getElementById('exportBtn');
+    btn.textContent = '⏳ Generating...';
     btn.disabled = true;
-    btn.textContent = 'Building…';
+
     try {
-        if (selectedFormat === 'pptx') {
-            await exportPPTX();
-        } else {
-            await exportPDF();
+        // Create new presentation
+        const pres = new PptxGenJS();
+        pres.layout = 'LAYOUT_WIDE'; // 16:9
+
+        // Slide dimensions: 13.33" x 7.5"
+        const SW = 13.33;  // slide width
+        const SH = 7.5;    // slide height
+
+        // Brand colors (hex without #)
+        const RED = 'E32227';
+        const DARK = '1A1A1A';
+        const WHITE = 'FFFFFF';
+        const BLUE_DASH = '93C5FD';
+
+        // Load logo as base64
+        const logoB64 = await fetchAsBase64('assets/logo.png');
+        const icon1 = await fetchAsBase64('assets/icons/icon1.png');
+const icon2 = await fetchAsBase64('assets/icons/icon2.png');
+const icon3 = await fetchAsBase64('assets/icons/icon3.png');
+const icon4 = await fetchAsBase64('assets/icons/icon4.png');
+const icon5 = await fetchAsBase64('assets/icons/icon5.png');
+const icon6 = await fetchAsBase64('assets/icons/icon6.png');
+
+        // Process each slide
+        for (let i = 0; i < presentation.slides.length; i++) {
+            const slideData = presentation.slides[i];
+            const slide = pres.addSlide();
+                        // Add sidebar icons (skip Title and Thank You slides)
+            if (slideData.layout !== 'title-slide' && slideData.layout !== 'thank-you') {
+                const iconX = 12.6; // Right edge of the 13.33" wide slide
+                if (icon1) slide.addImage({ data: icon1, x: iconX, y: 1.5, w: 0.5, h: 0.5 });
+                if (icon2) slide.addImage({ data: icon2, x: iconX, y: 2.3, w: 0.5, h: 0.5 });
+                if (icon3) slide.addImage({ data: icon3, x: iconX, y: 3.1, w: 0.5, h: 0.5 });
+                if (icon4) slide.addImage({ data: icon4, x: iconX, y: 3.9, w: 0.5, h: 0.5 });
+                if (icon5) slide.addImage({ data: icon5, x: iconX, y: 4.7, w: 0.5, h: 0.5 });
+                if (icon6) slide.addImage({ data: icon6, x: iconX, y: 5.5, w: 0.5, h: 0.5 });
+            }
+
+            switch (slideData.layout) {
+
+                case 'title-slide':
+                    await buildTitleSlide(pres, slide, slideData, SW, SH, logoB64, RED, DARK, WHITE);
+                    break;
+
+                case 'thank-you':
+                    await buildThankYouSlide(pres, slide, slideData, SW, SH, logoB64, RED, DARK, WHITE);
+                    break;
+
+                default:
+                    // All layouts with the common frame
+                    await buildCommonFrame(pres, slide, slideData, SW, SH, logoB64, RED, DARK, WHITE, BLUE_DASH);
+                    await buildSlideContent(pres, slide, slideData, SW, SH, RED, DARK, WHITE);
+                    break;
+            }
         }
-    } catch (err) {
-        console.error('Export error:', err);
+
+        // Get filename
+        const filename = document.getElementById('exportFilename').value || 'Rentease_Presentation';
+
+        // Save / download
+        await pres.writeFile({ fileName: filename + '.pptx' });
+
+        btn.textContent = '✅ Downloaded!';
+        setTimeout(function() {
+            btn.textContent = '⬇ Download PowerPoint';
+            btn.disabled = false;
+        }, 3000);
+
+    } catch(err) {
+        console.error('Export failed:', err);
+        btn.textContent = '❌ Export Failed';
+        btn.disabled = false;
         alert('Export failed: ' + err.message);
     }
-    btn.disabled = false;
-    btn.textContent = '⬇ Download Presentation';
 }
+// Convert all image src and background-image URLs to base64
+// before passing to html2canvas — prevents canvas taint
+async function preprocessSlideHTML(html) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PPTX EXPORT (via pptxgenjs)
-// ─────────────────────────────────────────────────────────────────────────────
-async function exportPPTX() {
-    if (typeof PptxGenJS === 'undefined') {
-        throw new Error('PptxGenJS library not loaded. Check your internet connection.');
-    }
-
-    const pres = new PptxGenJS();
-    pres.layout = 'LAYOUT_WIDE'; // 16:9
-
-    // Slide dimensions in inches (13.33 x 7.5)
-    const SW = 13.33;
-    const SH = 7.5;
-
-    for (let i = 0; i < slides.length; i++) {
-        const slideData = slides[i];
-        const slide     = pres.addSlide();
-
-        // Common frame: top red bar + logo + footer
-        await addCommonFrame(pres, slide, slideData, SW, SH);
-        // Layout-specific content
-        await addSlideContent(slide, slideData, SW, SH);
-    }
-
-    await pres.writeFile({ fileName: 'Rentease_Presentation.pptx' });
-}
-
-async function addCommonFrame(pres, slide, slideData, SW, SH) {
-    // Background
-    slide.background = { color: WHITE };
-
-    // Top red bar
-    slide.addShape(pres.ShapeType.rect, {
-        x: 0, y: 0, w: SW, h: 0.85,
-        fill: { color: '9B1C1C' },
-        line: { color: '9B1C1C' },
-    });
-
-    // Slide title on red bar
-    const barTitle = slideData.title || slideData.personName || 'RENTEASE';
-    slide.addText(barTitle.toUpperCase(), {
-        x: 0.3, y: 0.05, w: SW - 2, h: 0.75,
-        fontSize: 20, bold: true, color: WHITE,
-        fontFace: 'Segoe UI',
-        valign: 'middle',
-    });
-
-    // Logo on top-right (use text placeholder if logo fetch fails)
-    try {
-        slide.addImage({
-            path: 'assets/logo.png',
-            x: SW - 1.6, y: 0.05, w: 1.4, h: 0.75,
-            sizing: { type: 'contain', w: 1.4, h: 0.75 },
-        });
-    } catch (e) {
-        slide.addText('RENTEASE', {
-            x: SW - 1.8, y: 0.1, w: 1.6, h: 0.65,
-            fontSize: 10, bold: true, color: WHITE,
-            fontFace: 'Segoe UI', align: 'right',
-        });
-    }
-
-    // Footer dashed line (simulated with a thin rectangle)
-    slide.addShape(pres.ShapeType.rect, {
-        x: 0, y: SH - 0.45, w: SW, h: 0.02,
-        fill: { color: '93C5FD' },
-        line: { color: '93C5FD' },
-    });
-
-    // Footer text
-    slide.addText([
-        { text: 'Rentease', options: { bold: true, color: '9B1C1C' } },
-        { text: ' Limited — Powered by trust.', options: { color: DARK } },
-    ], {
-        x: 0.3, y: SH - 0.42, w: SW - 0.6, h: 0.38,
-        fontSize: 9, fontFace: 'Segoe UI', valign: 'middle',
-    });
-}
-
-async function addSlideContent(slide, slideData, SW, SH) {
-    // Content area starts below header
-    const CX = 0.3;
-    const CY = 1.0;
-    const CW = SW - 0.6;
-    const CH = SH - 1.6;
-
-    switch (slideData.layout) {
-        case 'title':         await pptxTitle(slide, slideData, CX, CY, CW, CH, SW, SH);   break;
-        case 'image-text':    await pptxImageText(slide, slideData, CX, CY, CW, CH, false); break;
-        case 'text-image':    await pptxImageText(slide, slideData, CX, CY, CW, CH, true);  break;
-        case 'bullets':       pptxBullets(slide, slideData, CX, CY, CW, CH);                break;
-        case 'profile-quote': await pptxProfile(slide, slideData, CX, CY, CW, CH);          break;
-        case 'icon-grid':     pptxIconGrid(slide, slideData, CX, CY, CW, CH);               break;
-        case 'four-images':   await pptxFourImages(slide, slideData, CX, CY, CW, CH);       break;
-        case 'thank-you':     pptxThankYou(slide, slideData, CX, CY, CW, CH, SW, SH);      break;
-        default:              pptxBullets(slide, slideData, CX, CY, CW, CH);
-    }
-}
-
-// ── PPTX layout builders ──────────────────────────────────────────────────────
-
-async function pptxTitle(slide, s, CX, CY, CW, CH, SW, SH) {
-    // Override the red bar with just RENTEASE — no slide title needed
-    // Big centered title
-    slide.addText(s.title || 'Rentease', {
-        x: CX, y: CY, w: CW, h: CH * 0.5,
-        fontSize: 40, bold: true, color: DARK,
-        fontFace: 'Segoe UI', align: 'center', valign: 'bottom',
-    });
-    // Subtitle
-    if (s.subtitle) {
-        slide.addText(s.subtitle, {
-            x: CX, y: CY + CH * 0.5 + 0.1, w: CW, h: CH * 0.25,
-            fontSize: 18, color: '6B7280',
-            fontFace: 'Segoe UI', align: 'center', valign: 'top',
-        });
-    }
-    // Red accent line
-    slide.addShape('rect', {
-        x: SW / 2 - 0.6, y: CY + CH * 0.5 + 0.08, w: 1.2, h: 0.06,
-        fill: { color: '9B1C1C' }, line: { color: '9B1C1C' },
-    });
-}
-
-async function pptxImageText(slide, s, CX, CY, CW, CH, flip) {
-    const imgW   = CW * 0.45;
-    const txtX   = flip ? CX : CX + imgW + 0.3;
-    const imgX   = flip ? CX + CW - imgW : CX;
-    const txtW   = CW - imgW - 0.3;
-
-    // Bullets text
-    const bulletObjs = (s.bullets || []).map(function (b) {
-        return { text: '• ' + b, options: { bullet: false, paraSpaceAfter: 6, color: DARK } };
-    });
-    slide.addText(bulletObjs, {
-        x: txtX, y: CY + 0.1, w: txtW, h: CH - 0.2,
-        fontSize: 14, fontFace: 'Segoe UI', valign: 'middle',
-        lineSpacingMultiple: 1.4,
-    });
-
-    // Image
-    if (s._imageUrl && isHttpUrl(s._imageUrl)) {
-        try {
-            slide.addImage({ path: s._imageUrl, x: imgX, y: CY + 0.1, w: imgW, h: CH - 0.2, sizing: { type: 'cover', w: imgW, h: CH - 0.2 } });
-            return;
-        } catch (e) { /* fall through to placeholder */ }
-    }
-    // Placeholder rect
-    slide.addShape('rect', {
-        x: imgX, y: CY + 0.1, w: imgW, h: CH - 0.2,
-        fill: { color: 'F3F4F6' }, line: { color: 'D1D5DB' },
-    });
-    slide.addText('🏗️', { x: imgX, y: CY + CH / 2 - 0.3, w: imgW, h: 0.6, fontSize: 28, align: 'center' });
-}
-
-function pptxBullets(slide, s, CX, CY, CW, CH) {
-    const bulletObjs = (s.bullets || []).map(function (b) {
-        return { text: '• ' + b, options: { paraSpaceAfter: 8, color: DARK } };
-    });
-    if (bulletObjs.length === 0) return;
-    slide.addText(bulletObjs, {
-        x: CX, y: CY, w: CW, h: CH,
-        fontSize: 16, fontFace: 'Segoe UI', valign: 'middle',
-        lineSpacingMultiple: 1.5,
-    });
-}
-
-async function pptxProfile(slide, s, CX, CY, CW, CH) {
-    const avatarW = 1.8;
-    // Avatar circle placeholder
-    slide.addShape('ellipse', {
-        x: CX, y: CY + 0.2, w: avatarW, h: avatarW,
-        fill: { color: 'FEE2E2' }, line: { color: '9B1C1C', pt: 2 },
-    });
-    slide.addText('👤', { x: CX, y: CY + 0.4, w: avatarW, h: 1.4, fontSize: 32, align: 'center' });
-    slide.addText(s.personName || '', {
-        x: CX, y: CY + avatarW + 0.3, w: avatarW, h: 0.4,
-        fontSize: 12, bold: true, align: 'center', color: DARK, fontFace: 'Segoe UI',
-    });
-    slide.addText(s.personRole || '', {
-        x: CX, y: CY + avatarW + 0.7, w: avatarW, h: 0.35,
-        fontSize: 10, align: 'center', color: '6B7280', fontFace: 'Segoe UI',
-    });
-
-    // Quote
-    const qx = CX + avatarW + 0.4;
-    const qw = CW - avatarW - 0.4;
-    if (s.quoteHighlight) {
-        slide.addShape('rect', {
-            x: qx, y: CY + 0.1, w: 0.06, h: CH * 0.4,
-            fill: { color: '9B1C1C' }, line: { color: '9B1C1C' },
-        });
-        slide.addText('"' + s.quoteHighlight + '"', {
-            x: qx + 0.15, y: CY + 0.1, w: qw - 0.15, h: CH * 0.4,
-            fontSize: 14, italic: true, color: '374151', fontFace: 'Segoe UI', valign: 'middle',
-        });
-    }
-    const bulletObjs = (s.bullets || []).map(function (b) {
-        return { text: '• ' + b, options: { paraSpaceAfter: 6, color: DARK } };
-    });
-    if (bulletObjs.length) {
-        slide.addText(bulletObjs, {
-            x: qx, y: CY + CH * 0.4 + 0.2, w: qw, h: CH * 0.55,
-            fontSize: 13, fontFace: 'Segoe UI',
-        });
-    }
-}
-
-function pptxIconGrid(slide, s, CX, CY, CW, CH) {
-    const items  = (s.items || []).slice(0, 6);
-    const cols   = 3;
-    const rows   = 2;
-    const cellW  = CW / cols;
-    const cellH  = CH / rows;
-
-    items.forEach(function (item, i) {
-        const col = i % cols;
-        const row = Math.floor(i / cols);
-        const x   = CX + col * cellW + 0.1;
-        const y   = CY + row * cellH + 0.1;
-        const w   = cellW - 0.2;
-        const h   = cellH - 0.2;
-
-        slide.addShape('roundRect', {
-            x, y, w, h,
-            fill: { color: 'F9FAFB' }, line: { color: 'E5E7EB' },
-            rectRadius: 0.08,
-        });
-        slide.addText(item.icon || '⚡', {
-            x, y: y + 0.1, w, h: 0.5, fontSize: 22, align: 'center',
-        });
-        slide.addText(item.label || '', {
-            x, y: y + 0.6, w, h: 0.3,
-            fontSize: 11, bold: true, align: 'center', color: DARK, fontFace: 'Segoe UI',
-        });
-        slide.addText(item.desc || '', {
-            x, y: y + 0.9, w, h: h - 1.0,
-            fontSize: 9, align: 'center', color: '6B7280', fontFace: 'Segoe UI',
-            lineSpacingMultiple: 1.2,
-        });
-    });
-}
-
-async function pptxFourImages(slide, s, CX, CY, CW, CH) {
-    const images = (s.images || []).slice(0, 4);
-    const cols   = 2;
-    const rows   = 2;
-    const cellW  = CW / cols;
-    const cellH  = CH / rows;
-    const imgH   = cellH * 0.75;
-
-    for (let i = 0; i < images.length; i++) {
-        const img  = images[i];
-        const col  = i % cols;
-        const row  = Math.floor(i / cols);
-        const x    = CX + col * cellW + 0.1;
-        const y    = CY + row * cellH + 0.1;
-        const w    = cellW - 0.2;
-
-        if (img._imageUrl && isHttpUrl(img._imageUrl)) {
+    // Fix <img> src attributes
+    const images = doc.querySelectorAll('img');
+    for (const img of images) {
+        if (img.getAttribute('src')) {
             try {
-                slide.addImage({ path: img._imageUrl, x, y, w, h: imgH, sizing: { type: 'cover', w, h: imgH } });
-            } catch (e) {
-                slide.addShape('rect', { x, y, w, h: imgH, fill: { color: 'E5E7EB' }, line: { color: 'D1D5DB' } });
-            }
-        } else {
-            slide.addShape('rect', { x, y, w, h: imgH, fill: { color: 'E5E7EB' }, line: { color: 'D1D5DB' } });
+                const b64 = await fetchAsBase64(img.getAttribute('src'));
+                if (b64) img.setAttribute('src', b64);
+            } catch(e) { /* skip */ }
+        }
+    }
+
+    // Fix inline background-image styles (used for uploaded images)
+    const styledEls = doc.querySelectorAll('[style]');
+    for (const el of styledEls) {
+        const style = el.getAttribute('style');
+        const match = style && style.match(/url\(["']?([^"')]+)["']?\)/);
+        if (match && match[1]) {
+            try {
+                const b64 = await fetchAsBase64(match[1]);
+                if (b64) {
+                    el.setAttribute('style',
+                        style.replace(match[0], 'url(' + b64 + ')')
+                    );
+                }
+            } catch(e) { /* skip */ }
+        }
+    }
+
+    return doc.body.innerHTML;
+}
+async function exportToPDF() {
+    const btn = document.getElementById('exportBtn');
+    btn.textContent = '⏳ Preparing...';
+    btn.disabled = true;
+
+    try {
+        let inlineCSS = '';
+        for (const sheet of document.styleSheets) {
+            try {
+                for (const rule of sheet.cssRules) {
+                    inlineCSS += rule.cssText + '\n';
+                }
+            } catch(e) { /* skip */ }
         }
 
-        slide.addText(img.label || '', {
-            x, y: y + imgH + 0.05, w, h: cellH - imgH - 0.15,
-            fontSize: 10, bold: true, align: 'center', color: DARK, fontFace: 'Segoe UI',
-        });
+        let slidesHTML = '';
+        for (let i = 0; i < presentation.slides.length; i++) {
+            slidesHTML += '<div class="print-slide">' + getSlidePreviewHTML(presentation.slides[i]) + '</div>';
+        }
+
+        const filename = document.getElementById('exportFilename').value || 'Rentease_Presentation';
+
+        const printHTML = '<!DOCTYPE html><html><head><base href="' + window.location.href + '"><meta charset="UTF-8"><title>' + filename + '</title><style>' + inlineCSS + ' * { margin:0; padding:0; box-sizing:border-box; } body { background:white; } .print-slide { width:960px; height:540px; overflow:hidden; position:relative; page-break-after:always; break-after:page; } .slide-frame { width:960px !important; height:540px !important; } @media print { @page { size: 960px 540px landscape; margin:0; } body { margin:0; } .print-slide { page-break-after:always; break-after:page; } }</style></head><body>' + slidesHTML + '<script>window.onload=function(){setTimeout(function(){window.print();},500);};<\/script></body></html>';
+        const blobURL = URL.createObjectURL(blob);
+        window.open(blobURL, '_blank');
+
+        btn.textContent = '✅ Print Dialog Opened';
+        setTimeout(function() {
+            btn.textContent = '⬇ Download PDF';
+            btn.disabled = false;
+        }, 3000);
+
+    } catch(err) {
+        console.error('PDF export failed:', err);
+        btn.textContent = '❌ Failed';
+        btn.disabled = false;
+        alert('PDF export failed: ' + err.message);
     }
 }
 
-function pptxThankYou(slide, s, CX, CY, CW, CH, SW, SH) {
-    slide.addText(s.title || 'Thank You', {
-        x: CX, y: CY, w: CW, h: CH * 0.4,
-        fontSize: 36, bold: true, color: DARK,
-        fontFace: 'Segoe UI', align: 'center', valign: 'bottom',
+// ============================================
+// HELPER: Fetch a URL and return base64
+// ============================================
+
+function fetchAsBase64(url) {
+    if (!url) return Promise.resolve(null);
+
+    return new Promise(function(resolve) {
+        // XMLHttpRequest works on file:// protocol, fetch() does not
+        const xhr = new XMLHttpRequest();
+        xhr.responseType = 'blob';
+
+        xhr.onload = function() {
+            const reader = new FileReader();
+            reader.onload = function() { resolve(reader.result); };
+            reader.onerror = function() { resolve(null); };
+            reader.readAsDataURL(xhr.response);
+        };
+
+        // Resolve null instead of rejecting — export continues
+        // even if one image fails to load
+        xhr.onerror = function() { resolve(null); };
+
+        xhr.open('GET', url);
+        xhr.send();
     });
-    if (s.subtitle) {
-        slide.addText(s.subtitle, {
-            x: CX, y: CY + CH * 0.4 + 0.1, w: CW, h: CH * 0.15,
-            fontSize: 16, color: '6B7280', fontFace: 'Segoe UI', align: 'center',
-        });
-    }
-    slide.addShape('rect', {
-        x: SW / 2 - 0.5, y: CY + CH * 0.4 + 0.08, w: 1.0, h: 0.05,
-        fill: { color: '9B1C1C' }, line: { color: '9B1C1C' },
+}
+
+
+// ============================================
+// COMMON FRAME (used by most layouts)
+// Red header + logo + sidebar + footer
+// ============================================
+
+async function buildCommonFrame(pres, slide, slideData, SW, SH, logoB64, RED, DARK, WHITE, BLUE_DASH) {
+
+    // Red header bar
+    slide.addShape(pres.ShapeType.rect, {
+        x: 0.1, y: 0.1,
+        w: 10.3, h: 0.7,
+        fill: { color: RED }
     });
 
-    const contactLines = [];
-    if (s.contactEmail) contactLines.push(s.contactEmail);
-    if (s.contactPhone) contactLines.push(s.contactPhone);
-    if (s.website)      contactLines.push(s.website);
+    // Slide title in header
+    slide.addText(slideData.title || 'SLIDE TITLE', {
+        x: 0.2, y: 0.15,
+        w: 9.8, h: 0.55,
+        fontSize: 18,
+        bold: true,
+        color: WHITE,
+        valign: 'middle'
+    });
 
-    if (contactLines.length) {
-        slide.addText(contactLines.join('  ·  '), {
-            x: CX, y: CY + CH * 0.65, w: CW, h: 0.5,
-            fontSize: 12, color: '374151', fontFace: 'Segoe UI', align: 'center',
+    // Logo
+    if (logoB64) {
+        slide.addImage({
+            data: logoB64,
+            x: 10.6, y: 0.05,
+            w: 2.5, h: 0.9
         });
     }
+
+    // Equipment sidebar — 6 small red-tinted boxes
+    for (let i = 0; i < 6; i++) {
+        slide.addShape(pres.ShapeType.rect, {
+            x: 10.6,
+            y: 1.1 + (i * 0.78),
+            w: 0.55, h: 0.65,
+            fill: { color: 'FFF5F5' },
+            line: { color: 'FECACA', width: 1 }
+        });
+    }
+
+    // Blue dashed footer line
+    slide.addShape(pres.ShapeType.line, {
+        x: 0.1, y: 6.8,
+        w: 10.3, h: 0,
+        line: { color: BLUE_DASH, width: 1, dashType: 'dash' }
+    });
+
+    // Footer text: RENTEASE LIMITED
+    slide.addText([
+        { text: 'RENT', options: { color: RED, bold: true } },
+        { text: 'EASE LIMITED', options: { color: DARK, bold: true } }
+    ], {
+        x: 0.1, y: 6.85,
+        w: 5, h: 0.35,
+        fontSize: 9
+    });
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PDF EXPORT (via html2canvas + jsPDF)
-// ─────────────────────────────────────────────────────────────────────────────
-async function exportPDF() {
-    if (typeof jspdf === 'undefined' && typeof window.jspdf === 'undefined') {
-        throw new Error('jsPDF library not loaded.');
+
+// ============================================
+// CONTENT BUILDERS — one per layout
+// ============================================
+
+async function buildSlideContent(pres, slide, slideData, SW, SH, RED, DARK, WHITE) {
+
+    // Content area boundaries (inside the common frame)
+    const CX = 0.2;   // content x start
+    const CY = 1.0;   // content y start (below header)
+    const CW = 10.2;  // content width (before sidebar)
+    const CH = 5.6;   // content height (above footer)
+
+    switch (slideData.layout) {
+
+        // ---- IMAGE + TEXT ----
+        case 'image-text': {
+            const imageBlocks = slideData.blocks.filter(function(b) { return b.type === 'image'; });
+            const textBlocks = slideData.blocks.filter(function(b) { return b.type !== 'image'; });
+
+            const leftW = CW * 0.38;
+            const rightX = CX + leftW + 0.2;
+            const rightW = CW * 0.60;
+
+            // Images on left
+            let imgY = CY + 0.3;
+            for (let i = 0; i < imageBlocks.length; i++) {
+                const block = imageBlocks[i];
+                const imgH = Math.min(2.2, (CH - 0.5) / imageBlocks.length);
+
+                if (block.src) {
+                    const imgData = await fetchAsBase64(block.src);
+                    const shapeType = block.shape === 'circle' ? 'ellipse' : 'rect';
+
+                    if (block.shape === 'circle') {
+                        slide.addImage({
+                            data: imgData,
+                            x: CX + 0.2,
+                            y: imgY,
+                            w: imgH,
+                            h: imgH,
+                            rounding: true
+                        });
+                    } else {
+                        slide.addImage({
+                            data: imgData,
+                            x: CX + 0.1,
+                            y: imgY,
+                            w: leftW - 0.2,
+                            h: imgH
+                        });
+                    }
+                }
+
+                if (block.caption) {
+                    slide.addText(block.caption, {
+                        x: CX, y: imgY + imgH + 0.05,
+                        w: leftW, h: 0.25,
+                        fontSize: 8, bold: true,
+                        color: DARK, align: 'center'
+                    });
+                }
+
+                imgY += imgH + 0.4;
+            }
+
+            // Text on right
+            let textY = CY + 0.2;
+            for (let i = 0; i < textBlocks.length; i++) {
+                const block = textBlocks[i];
+                const prefix = block.type === 'bullet' ? '•  ' : '';
+                slide.addText(prefix + (block.text || ''), {
+                    x: rightX, y: textY,
+                    w: rightW, h: 0.5,
+                    fontSize: 11,
+                    color: DARK,
+                    wrap: true,
+                    valign: 'top'
+                });
+                textY += 0.55;
+            }
+            break;
+        }
+
+        // ---- ICON GRID ----
+        case 'icon-grid': {
+            const icons = slideData.blocks.filter(function(b) { return b.type === 'icon'; });
+            const cols = 4;
+            const cellW = CW / cols;
+            const cellH = 2.2;
+
+            for (let i = 0; i < icons.length; i++) {
+                const col = i % cols;
+                const row = Math.floor(i / cols);
+                const x = CX + col * cellW + cellW * 0.25;
+                const y = CY + row * (cellH + 0.3) + 0.3;
+
+                if (icons[i].src) {
+                    const imgData = await fetchAsBase64(icons[i].src);
+                    slide.addImage({ data: imgData, x: x, y: y, w: 1.0, h: 1.0 });
+                } else {
+                    slide.addShape(pres.ShapeType.rect, {
+                        x: x, y: y, w: 1.0, h: 1.0,
+                        fill: { color: 'F3F4F6' },
+                        line: { color: 'E5E7EB' }
+                    });
+                }
+
+                slide.addText(icons[i].label || '', {
+                    x: CX + col * cellW, y: y + 1.1,
+                    w: cellW, h: 0.4,
+                    fontSize: 9, bold: true,
+                    color: DARK, align: 'center'
+                });
+            }
+            break;
+        }
+
+        // ---- TEXT + IMAGE ----
+        case 'text-image': {
+            const imageBlocks = slideData.blocks.filter(function(b) { return b.type === 'image'; });
+            const textBlocks = slideData.blocks.filter(function(b) { return b.type !== 'image'; });
+
+            const textW = CW * 0.60;
+            const textX = CX;
+            const imgX = CX + textW + 0.2;
+            const imgW = CW * 0.38;
+
+            // Text on left
+            let textY = CY + 0.2;
+            for (let i = 0; i < textBlocks.length; i++) {
+                const block = textBlocks[i];
+                const prefix = block.type === 'bullet' ? '•  ' : '';
+                slide.addText(prefix + (block.text || ''), {
+                    x: textX, y: textY,
+                    w: textW, h: 0.5,
+                    fontSize: 11,
+                    color: DARK,
+                    wrap: true,
+                    valign: 'top'
+                });
+                textY += 0.55;
+            }
+
+            // Images on right
+            let imgY = CY + 0.3;
+            for (let i = 0; i < imageBlocks.length; i++) {
+                const block = imageBlocks[i];
+                const imgH = Math.min(2.2, (CH - 0.5) / imageBlocks.length);
+
+                if (block.src) {
+                    const imgData = await fetchAsBase64(block.src);
+                    if (block.shape === 'circle') {
+                        slide.addImage({
+                            data: imgData, x: imgX + 0.2, y: imgY, w: imgH, h: imgH, rounding: true
+                        });
+                    } else {
+                        slide.addImage({
+                            data: imgData, x: imgX + 0.1, y: imgY, w: imgW - 0.2, h: imgH
+                        });
+                    }
+                }
+                if (block.caption) {
+                    slide.addText(block.caption, {
+                        x: imgX, y: imgY + imgH + 0.05, w: imgW, h: 0.25, fontSize: 8, bold: true, color: DARK, align: 'center'
+                    });
+                }
+                imgY += imgH + 0.4;
+            }
+            break;
+        }
+
+        // ---- PROFILE / QUOTE ----
+        case 'profile-quote': {
+            const f = slideData.fields;
+
+            // Quote highlight box
+            if (f.quoteHighlight) {
+                slide.addShape(pres.ShapeType.rect, {
+                    x: CX, y: CY,
+                    w: CW, h: 0.55,
+                    fill: { color: 'FEF3C7' }
+                });
+                slide.addText('"' + f.quoteHighlight + '"', {
+                    x: CX + 0.2, y: CY + 0.05,
+                    w: CW - 0.4, h: 0.45,
+                    fontSize: 10, italic: true, bold: true,
+                    color: '92400E'
+                });
+            }
+
+            const contentY = f.quoteHighlight ? CY + 0.7 : CY + 0.2;
+
+            // Photo on left
+            if (f.photo) {
+                const imgData = await fetchAsBase64(f.photo);
+                slide.addImage({
+                    data: imgData,
+                    x: CX + 0.2, y: contentY,
+                    w: 2.0, h: 2.0,
+                    rounding: true
+                });
+            }
+
+            slide.addText(f.personName || '', {
+                x: CX, y: contentY + 2.1,
+                w: 2.4, h: 0.35,
+                fontSize: 10, bold: true,
+                color: DARK, align: 'center'
+            });
+
+            slide.addText(f.personRole || '', {
+                x: CX, y: contentY + 2.45,
+                w: 2.4, h: 0.3,
+                fontSize: 8, color: '6B7280', align: 'center'
+            });
+
+            // Text on right
+            const rightX = CX + 2.7;
+            let textY = contentY;
+            slideData.blocks.forEach(function(block) {
+                const prefix = block.type === 'bullet' ? '•  ' : '';
+                slide.addText(prefix + (block.text || ''), {
+                    x: rightX, y: textY,
+                    w: CW - 2.9, h: 0.5,
+                    fontSize: 11, color: DARK, wrap: true
+                });
+                textY += 0.55;
+            });
+            break;
+        }
+
+        // ---- IMAGE SHOWCASE ----
+        case 'image-showcase': {
+            const images = slideData.blocks.filter(function(b) { return b.type === 'image'; });
+            const count = images.length || 1;
+            const imgW = (CW - 0.2 * (count + 1)) / count;
+
+            for (let i = 0; i < images.length; i++) {
+                const x = CX + 0.2 + i * (imgW + 0.2);
+                const y = CY + 0.3;
+                const imgH = CH - 0.9;
+
+                if (images[i].src) {
+                    const imgData = await fetchAsBase64(images[i].src);
+                    slide.addImage({ data: imgData, x: x, y: y, w: imgW, h: imgH });
+                } else {
+                    slide.addShape(pres.ShapeType.rect, {
+                        x: x, y: y, w: imgW, h: imgH,
+                        fill: { color: 'F3F4F6' }, line: { color: 'E5E7EB' }
+                    });
+                }
+
+                if (images[i].caption) {
+                    slide.addText(images[i].caption, {
+                        x: x, y: y + imgH + 0.05,
+                        w: imgW, h: 0.3,
+                        fontSize: 9, bold: true,
+                        color: DARK, align: 'center'
+                    });
+                }
+            }
+            break;
+        }
+
+        // ---- IMAGE GRID + LABELS ----
+        case 'image-grid-labels': {
+            const cells = slideData.fields.cells || [{},{},{},{}];
+            const cellW = (CW - 0.3) / 2;
+            const cellH = (CH - 0.4) / 2;
+
+            for (let i = 0; i < 4; i++) {
+                const col = i % 2;
+                const row = Math.floor(i / 2);
+                const x = CX + col * (cellW + 0.2);
+                const y = CY + row * (cellH + 0.2) + 0.1;
+                const cell = cells[i] || {};
+
+                if (cell.src) {
+                    const imgData = await fetchAsBase64(cell.src);
+                    slide.addImage({
+                        data: imgData,
+                        x: x, y: y,
+                        w: cellW * 0.45, h: cellH - 0.1
+                    });
+                } else {
+                    slide.addShape(pres.ShapeType.rect, {
+                        x: x, y: y,
+                        w: cellW * 0.45, h: cellH - 0.1,
+                        fill: { color: 'E5E7EB' }
+                    });
+                }
+
+                // Blue label tag
+                slide.addShape(pres.ShapeType.rect, {
+                    x: x + cellW * 0.48, y: y + cellH * 0.25,
+                    w: cellW * 0.5, h: 0.45,
+                    fill: { color: '3B82F6' }
+                });
+                slide.addText(cell.label || '', {
+                    x: x + cellW * 0.48, y: y + cellH * 0.25,
+                    w: cellW * 0.5, h: 0.45,
+                    fontSize: 9, bold: true,
+                    color: WHITE, valign: 'middle'
+                });
+            }
+            break;
+        }
+
+        // ---- EQUIPMENT COMPARISON ----
+        case 'equipment-comparison': {
+            const f = slideData.fields;
+            const colW = CW / 3;
+
+            // Left image
+            if (f.leftImage) {
+                const imgData = await fetchAsBase64(f.leftImage);
+                slide.addImage({ data: imgData, x: CX, y: CY + 0.2, w: colW - 0.2, h: 2.5 });
+            }
+
+            // Left bullets
+            (f.leftBullets || []).forEach(function(b, i) {
+                if (b) slide.addText('• ' + b, {
+                    x: CX, y: CY + 2.9 + i * 0.45,
+                    w: colW - 0.2, h: 0.4,
+                    fontSize: 9, color: DARK
+                });
+            });
+
+            // Center label
+            const centerX = CX + colW + 0.1;
+            if (f.centerTitle) {
+                slide.addShape(pres.ShapeType.rect, {
+                    x: centerX, y: CY + 0.2,
+                    w: colW - 0.2, h: 0.5,
+                    fill: { color: RED }
+                });
+                slide.addText(f.centerTitle, {
+                    x: centerX, y: CY + 0.2,
+                    w: colW - 0.2, h: 0.5,
+                    fontSize: 11, bold: true,
+                    color: WHITE, align: 'center', valign: 'middle'
+                });
+            }
+            if (f.centerDesc) {
+                slide.addText(f.centerDesc, {
+                    x: centerX, y: CY + 0.8,
+                    w: colW - 0.2, h: 1.5,
+                    fontSize: 9, color: DARK, wrap: true, align: 'center'
+                });
+            }
+
+            // Right image
+            const rightX = CX + colW * 2 + 0.2;
+            if (f.rightImage) {
+                const imgData = await fetchAsBase64(f.rightImage);
+                slide.addImage({ data: imgData, x: rightX, y: CY + 0.2, w: colW - 0.3, h: 2.5 });
+            }
+
+            // Right bullets
+            (f.rightBullets || []).forEach(function(b, i) {
+                if (b) slide.addText('• ' + b, {
+                    x: rightX, y: CY + 2.9 + i * 0.45,
+                    w: colW - 0.2, h: 0.4,
+                    fontSize: 9, color: DARK
+                });
+            });
+            break;
+        }
+
+        default:
+            slide.addText('Content not available for this layout type', {
+                x: CX, y: CY + 2,
+                w: CW, h: 1,
+                fontSize: 14, color: '9CA3AF', align: 'center'
+            });
+            break;
     }
-    if (typeof html2canvas === 'undefined') {
-        throw new Error('html2canvas library not loaded.');
-    }
-
-    const { jsPDF } = window.jspdf;
-    const pdf = new jsPDF({ orientation: 'landscape', unit: 'px', format: [1280, 720] });
-
-    // Create an off-screen container
-    const container = document.createElement('div');
-    container.style.cssText = 'position:fixed;left:-9999px;top:0;width:1280px;height:720px;background:white;overflow:hidden;';
-    document.body.appendChild(container);
-
-    for (let i = 0; i < slides.length; i++) {
-        container.innerHTML = `<div style="width:1280px;height:720px;background:white;font-family:Segoe UI,sans-serif;">
-            ${buildSlidePreviewHTML(slides[i])}
-        </div>`;
-
-        const canvas = await html2canvas(container, { scale: 1, useCORS: true, allowTaint: true });
-        const imgData = canvas.toDataURL('image/jpeg', 0.95);
-
-        if (i > 0) pdf.addPage([1280, 720], 'landscape');
-        pdf.addImage(imgData, 'JPEG', 0, 0, 1280, 720);
-    }
-
-    document.body.removeChild(container);
-    pdf.save('Rentease_Presentation.pdf');
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// PARTICLE CANVAS BACKGROUND
-// ─────────────────────────────────────────────────────────────────────────────
-function setupParticleCanvas() {
+
+// ============================================
+// TITLE SLIDE builder
+// ============================================
+
+async function buildTitleSlide(pres, slide, slideData, SW, SH, logoB64, RED, DARK, WHITE) {
+    const f = slideData.fields;
+
+    // Top red line
+    slide.addShape(pres.ShapeType.rect, {
+        x: 0, y: 0, w: SW, h: 0.12,
+        fill: { color: RED }
+    });
+
+    // Blue banner
+    slide.addShape(pres.ShapeType.rect, {
+        x: 1.5, y: 0.5, w: SW - 3, h: 2.2,
+        fill: { color: 'DBEAFE' }
+    });
+
+    // Logo inside banner
+    if (logoB64) {
+        slide.addImage({
+            data: logoB64,
+            x: SW / 2 - 1.0, y: 0.7,
+            w: 2.0, h: 0.9
+        });
+    }
+
+    // Company name
+    slide.addText([
+        { text: 'RENT', options: { color: RED } },
+        { text: 'EASE LIMITED', options: { color: DARK } }
+    ], {
+        x: 1.5, y: 1.7,
+        w: SW - 3, h: 0.7,
+        fontSize: 28, bold: true,
+        align: 'center'
+    });
+
+    // Subtitle
+    slide.addText(f.subtitle || 'Corporate Presentation', {
+        x: 1.5, y: 3.1,
+        w: SW - 3, h: 0.7,
+        fontSize: 20, bold: true,
+        color: '374151', align: 'center'
+    });
+
+    // Tagline
+    slide.addText(f.tagline || 'MAKE THE DIFFERENCE', {
+        x: 2, y: 4.5,
+        w: SW - 4, h: 0.5,
+        fontSize: 14, bold: true,
+        color: DARK, align: 'center',
+        charSpacing: 4
+    });
+
+    // Bottom red line
+    slide.addShape(pres.ShapeType.rect, {
+        x: 0, y: SH - 0.12, w: SW, h: 0.12,
+        fill: { color: RED }
+    });
+}
+
+
+// ============================================
+// THANK YOU slide builder
+// ============================================
+
+async function buildThankYouSlide(pres, slide, slideData, SW, SH, logoB64, RED, DARK, WHITE) {
+    const f = slideData.fields;
+
+    // Top red line
+    slide.addShape(pres.ShapeType.rect, {
+        x: 0, y: 0, w: SW, h: 0.12,
+        fill: { color: RED }
+    });
+
+    // Blue handshake box
+    slide.addShape(pres.ShapeType.rect, {
+        x: 1.0, y: 1.5,
+        w: 2.5, h: 2.5,
+        fill: { color: '3B82F6' }
+    });
+    slide.addText('🤝', {
+        x: 1.0, y: 1.5, w: 2.5, h: 2.5,
+        fontSize: 60, align: 'center', valign: 'middle'
+    });
+
+    // Contact info
+    slide.addText('📍  ' + (f.address || ''), {
+        x: 4.2, y: 2.0, w: 8.5, h: 0.8,
+        fontSize: 12, color: DARK, wrap: true
+    });
+    slide.addText('📞  ' + (f.phone || ''), {
+        x: 4.2, y: 3.0, w: 8.5, h: 0.5,
+        fontSize: 12, color: DARK
+    });
+    slide.addText('✉   ' + (f.email || ''), {
+        x: 4.2, y: 3.6, w: 8.5, h: 0.5,
+        fontSize: 12, color: DARK
+    });
+
+    // Logo
+    if (logoB64) {
+        slide.addImage({
+            data: logoB64,
+            x: SW - 3.0, y: 0.2,
+            w: 2.5, h: 0.9
+        });
+    }
+
+    // Footer
+    slide.addShape(pres.ShapeType.line, {
+        x: 0.5, y: 6.8, w: SW - 1, h: 0,
+        line: { color: '93C5FD', width: 1, dashType: 'dash' }
+    });
+    slide.addText([
+        { text: 'RENT', options: { color: RED } },
+        { text: 'EASE LIMITED', options: { color: DARK } }
+    ], {
+        x: 0.5, y: 6.85, w: 5, h: 0.35,
+        fontSize: 9, bold: true
+    });
+}
+// ============================================
+// APP STARTUP
+// ============================================
+
+initDB().then(function() {
+    loadPresentation();
+}).catch(function(e) {
+    console.warn('IndexedDB unavailable, loading without images:', e);
+    loadPresentation();
+});
+
+// ============================================
+// PARTICLE BACKGROUND — Ported from Gamma Clone's ParticleBackground.jsx
+// (converted from React/useEffect to vanilla JS)
+// ============================================
+
+let particleAnimId = null;
+
+function initParticles() {
+    // Cancel any previous animation loop
+    if (particleAnimId) cancelAnimationFrame(particleAnimId);
+
     const canvas = document.getElementById('particleCanvas');
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
-
     let particles = [];
-    const PARTICLE_COUNT = 60;
+    const numParticles = 200;
 
+    // Ensure canvas fills the screen — same as resize() in the React version
     function resize() {
-        canvas.width  = window.innerWidth;
+        canvas.width = window.innerWidth;
         canvas.height = window.innerHeight;
     }
     window.addEventListener('resize', resize);
     resize();
 
-    function randBetween(a, b) { return a + Math.random() * (b - a); }
+    // Track mouse — same as handleMouseMove in React version
+    let mouse = { x: null, y: null, radius: 120 };
+    function handleMouseMove(e) {
+        mouse.x = e.clientX;
+        mouse.y = e.clientY;
+    }
+    window.addEventListener('mousemove', handleMouseMove);
 
-    function createParticle() {
-        return {
-            x: Math.random() * canvas.width,
-            y: Math.random() * canvas.height,
-            r: randBetween(1, 3),
-            vx: randBetween(-0.3, 0.3),
-            vy: randBetween(-0.3, 0.3),
-            alpha: randBetween(0.05, 0.25),
-        };
+    // Particle class — copied directly from ParticleBackground.jsx
+    function Particle() {
+        this.x = Math.random() * canvas.width;
+        this.y = Math.random() * canvas.height;
+        this.size = Math.random() * 2 + 1;
+        this.baseX = this.x;
+        this.baseY = this.y;
+        this.density = (Math.random() * 30) + 1;
     }
 
-    for (let i = 0; i < PARTICLE_COUNT; i++) particles.push(createParticle());
+    Particle.prototype.draw = function() {
+        ctx.fillStyle = 'rgba(227, 34, 39, 0.6)'; // Rentease Red dots
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+        ctx.closePath();
+        ctx.fill();
+    };
 
-    function draw() {
+    Particle.prototype.update = function() {
+        var dx = mouse.x - this.x;
+        var dy = mouse.y - this.y;
+        var distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (distance < mouse.radius) {
+            var forceDirectionX = dx / distance;
+            var forceDirectionY = dy / distance;
+            var force = (mouse.radius - distance) / mouse.radius;
+            this.x -= forceDirectionX * force * this.density;
+            this.y -= forceDirectionY * force * this.density;
+        } else {
+            if (this.x !== this.baseX) { this.x -= (this.x - this.baseX) / 15; }
+            if (this.y !== this.baseY) { this.y -= (this.y - this.baseY) / 15; }
+        }
+    };
+
+    // init — same as init() in React version
+    function init() {
+        particles = [];
+        for (var i = 0; i < numParticles; i++) {
+            particles.push(new Particle());
+        }
+    }
+
+    // animate — same as animate() in React version
+    function animate() {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
-        particles.forEach(function (p) {
-            p.x += p.vx;
-            p.y += p.vy;
-            if (p.x < 0 || p.x > canvas.width)  p.vx *= -1;
-            if (p.y < 0 || p.y > canvas.height)  p.vy *= -1;
+        for (var i = 0; i < particles.length; i++) {
+            particles[i].draw();
+            particles[i].update();
+        }
+        particleAnimId = requestAnimationFrame(animate);
+    }
 
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-            ctx.fillStyle = 'rgba(227,34,39,' + p.alpha + ')';
-            ctx.fill();
+    init();
+    animate();
+}
+
+// Start particles immediately on page load
+initParticles();
+
+// ============================================
+// AI GENERATION — Ported from Gamma Clone's ai.js
+// (converted from ES module + @google/generative-ai SDK
+//  to vanilla fetch against the Gemini REST API)
+// ============================================
+
+async function generateAIPresentation() {
+    const promptInput = document.getElementById('aiPromptInput');
+    const slideCountInput = document.getElementById('aiSlideCount');
+    const generateBtn = document.getElementById('aiGenerateBtn');
+
+    const userPrompt = promptInput ? promptInput.value.trim() : '';
+    const slideCount = slideCountInput ? parseInt(slideCountInput.value) || 6 : 6;
+
+    if (!userPrompt) {
+        alert('Please enter a topic or prompt first!');
+        return;
+    }
+
+    // Show loading state
+    const loadingEl = document.getElementById('aiLoadingStatus');
+    const statusText = document.getElementById('aiStatusText');
+    if (loadingEl) loadingEl.style.display = 'block';
+    if (statusText) statusText.textContent = 'AI is thinking...';
+    if (generateBtn) { generateBtn.disabled = true; generateBtn.textContent = 'Generating...'; }
+
+    // --- Gemini prompt — same system instruction as ai.js ---
+    const systemInstruction = `You are a professional corporate presentation generator for "RENTEASE LIMITED", an equipment rental company.
+Generate exactly ${slideCount} slides based on the user's topic.
+CRITICAL RULE: Output ONLY a raw JSON array. No markdown, no \`\`\`json tags.
+Each slide object MUST have: "layout" (string), "title" (string).
+
+Available layouts and their extra required fields:
+1. "title-slide"  — fields: subtitle, tagline
+2. "image-text"   — fields: bullets (array of 3 strings), imageCaption (string)
+3. "profile-quote"— fields: personName, personRole, quoteHighlight, bullets (array of 3 strings)
+4. "icon-grid"    — fields: icons (array of 6 objects each with label and emoji)
+5. "image-grid-labels" — fields: cells (array of 4 objects each with label)
+6. "equipment-comparison" — fields: centerTitle, centerDesc, leftBullets (array of 3), rightBullets (array of 3)
+7. "thank-you"    — fields: address, phone, email
+
+Slide 1 MUST be "title-slide". Last slide MUST be "thank-you".
+Use the most appropriate layouts for the middle slides.`;
+
+    const API_KEY = 'AQ.Ab8RN6It7cDVPTg2ALV2adjclECJeAA3__KgoxEW6ttxoaZIgA'; // <-- paste your Gemini API key here
+    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
+
+    try {
+        if (statusText) statusText.textContent = 'Contacting Gemini AI...';
+
+        const response = await fetch(API_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{
+                    parts: [{ text: systemInstruction + '\n\nUser Topic: ' + userPrompt }]
+                }]
+            })
         });
 
-        // Draw connecting lines for nearby particles
-        for (let i = 0; i < particles.length; i++) {
-            for (let j = i + 1; j < particles.length; j++) {
-                const dx   = particles[i].x - particles[j].x;
-                const dy   = particles[i].y - particles[j].y;
-                const dist = Math.sqrt(dx * dx + dy * dy);
-                if (dist < 120) {
-                    ctx.beginPath();
-                    ctx.moveTo(particles[i].x, particles[i].y);
-                    ctx.lineTo(particles[j].x, particles[j].y);
-                    ctx.strokeStyle = 'rgba(227,34,39,' + (0.05 * (1 - dist / 120)) + ')';
-                    ctx.lineWidth = 0.5;
-                    ctx.stroke();
-                }
-            }
+        if (!response.ok) {
+            if (response.status === 429) throw new Error('Rate limit reached. Wait a moment and try again, or check your API quota at aistudio.google.com.');
+            if (response.status === 400) throw new Error('Invalid API key. Paste your key from aistudio.google.com into app.js line 2437.');
+            if (response.status === 403) throw new Error('API key does not have permission. Make sure it is a Gemini API key from aistudio.google.com.');
+            throw new Error('Gemini API error: ' + response.status);
         }
 
-        requestAnimationFrame(draw);
+        const data = await response.json();
+        let rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+        rawText = rawText.replace(/```json/g, '').replace(/```/g, '').trim();
+
+        let aiSlides;
+        try {
+            aiSlides = JSON.parse(rawText);
+        } catch (e) {
+            throw new Error('AI returned invalid JSON. Try again.');
+        }
+
+        if (statusText) statusText.textContent = 'Building your presentation...';
+
+        // Clear existing slides and populate from AI response
+        presentation.slides = [];
+        slideCounter = 0;
+        blockCounter = 0;
+
+        aiSlides.forEach(function(aiSlide) {
+            const slide = addSlide(aiSlide.layout || 'image-text');
+            if (!slide) return;
+
+            slide.title = aiSlide.title || '';
+
+            // Merge AI fields into slide.fields
+            if (aiSlide.subtitle)       slide.fields.subtitle      = aiSlide.subtitle;
+            if (aiSlide.tagline)        slide.fields.tagline       = aiSlide.tagline;
+            if (aiSlide.centerTitle)    slide.fields.centerTitle   = aiSlide.centerTitle;
+            if (aiSlide.centerDesc)     slide.fields.centerDesc    = aiSlide.centerDesc;
+            if (aiSlide.personName)     slide.fields.personName    = aiSlide.personName;
+            if (aiSlide.personRole)     slide.fields.personRole    = aiSlide.personRole;
+            if (aiSlide.quoteHighlight) slide.fields.quoteHighlight = aiSlide.quoteHighlight;
+            if (aiSlide.address)        slide.fields.address       = aiSlide.address;
+            if (aiSlide.phone)          slide.fields.phone         = aiSlide.phone;
+            if (aiSlide.email)          slide.fields.email         = aiSlide.email;
+
+            // Bullets / text blocks
+            if (Array.isArray(aiSlide.bullets)) {
+                aiSlide.bullets.forEach(function(text) {
+                    addBlock('text');
+                    var lastBlock = slide.blocks[slide.blocks.length - 1];
+                    if (lastBlock) lastBlock.text = text;
+                });
+            }
+            if (Array.isArray(aiSlide.leftBullets))  slide.fields.leftBullets  = aiSlide.leftBullets;
+            if (Array.isArray(aiSlide.rightBullets)) slide.fields.rightBullets = aiSlide.rightBullets;
+
+            // Icon grid
+            if (Array.isArray(aiSlide.icons)) {
+                aiSlide.icons.forEach(function(iconData) {
+                    addBlock('icon');
+                    var lastBlock = slide.blocks[slide.blocks.length - 1];
+                    if (lastBlock) { lastBlock.label = iconData.label || ''; lastBlock.src = iconData.emoji || ''; }
+                });
+            }
+
+            // Image grid cells
+            if (Array.isArray(aiSlide.cells)) {
+                slide.fields.cells = aiSlide.cells.map(function(c) {
+                    return { src: '', label: c.label || '' };
+                });
+            }
+        });
+
+        savePresentation();
+
+        // Navigate to Step 2 — same as the layout-card click handler
+        setTimeout(function() {
+            document.querySelector('[data-step="2"]').click();
+        }, 300);
+
+    } catch (err) {
+        console.error('AI generation error:', err);
+        alert('Error: ' + err.message);
+    } finally {
+        if (loadingEl) loadingEl.style.display = 'none';
+        if (generateBtn) { generateBtn.disabled = false; generateBtn.textContent = '✨ Generate'; }
     }
-
-    draw();
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SIDEBAR BADGE + RESUME PANEL
-// ─────────────────────────────────────────────────────────────────────────────
-function updateSlideBadge() {
-    const badge = document.getElementById('slideBadge');
-    if (!badge) return;
-    if (slides.length > 0) {
-        badge.textContent = slides.length;
-        badge.classList.add('visible');
-    } else {
-        badge.classList.remove('visible');
-    }
-}
-
-function updateResumePanelFromState() {
-    const panel = document.getElementById('resumePanel');
-    const info  = document.getElementById('resumeInfo');
-    if (!panel || !info) return;
-    if (slides.length > 0) {
-        panel.style.display = 'flex';
-        info.textContent = slides.length + ' slide' + (slides.length !== 1 ? 's' : '') + ' in progress';
-    } else {
-        panel.style.display = 'none';
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// UTILITIES
-// ─────────────────────────────────────────────────────────────────────────────
-function escHtml(str) {
-    if (!str) return '';
-    return String(str)
-        .replace(/&/g,  '&amp;')
-        .replace(/</g,  '&lt;')
-        .replace(/>/g,  '&gt;')
-        .replace(/"/g,  '&quot;')
-        .replace(/'/g,  '&#39;');
-}
-
-function isHttpUrl(url) {
-    return url && (url.startsWith('http://') || url.startsWith('https://'));
-}
+// ============================================
+// ENTER KEY SUBMIT — lifted from App.jsx's handleKeyDown
+// Enter submits, Shift+Enter adds a new line (same as Gamma Clone)
+// ============================================
+document.addEventListener('DOMContentLoaded', function() {
+    // Use event delegation so it also works after innerHTML swaps on nav
+    document.addEventListener('keydown', function(e) {
+        if (e.target && e.target.id === 'aiPromptInput') {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault(); // stop the newline
+                var btn = document.getElementById('aiGenerateBtn');
+                if (btn && !btn.disabled) generateAIPresentation();
+            }
+            // Shift+Enter falls through naturally — textarea inserts a newline
+        }
+    });
+});
