@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RENTEASE PPT Builder</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+
+<body>
+
+    <!-- HEADER -->
+    <header class="app-header">
+        <div class="logo">
+            <img src="assets/logo.png" alt="Rentease Limited Logo" class="logo-img">
+        </div>
+        <div class="header-divider"></div>
+        <h1 class="app-title">PPT Builder</h1>
+
+        <div class="ticker-wrapper">
+            <div class="ticker-content">
+                <span>★ Rentease Limited — Building Trust Since 2022</span>
+                <span>★ Rentease Limited — Building Trust Since 2022 </span>
+                <span>★ Rentease Limited — Building Trust Since 2022</span>
+                <span>★ Rentease Limited — Building Trust Since 2022</span>
+                <span>★ Rentease Limited — Building Trust Since 2022</span>
+                <span>★ Rentease Limited — Building Trust Since 2022</span>
+            </div>
+        </div>
+        <button class="sidebar-toggle" id="sidebarToggle" aria-label="Toggle menu">
+            <span></span><span></span><span></span>
+        </button>
+    </header>
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <!-- SIDEBAR -->
+    <!-- SIDEBAR -->
+    <aside class="sidebar">
+        <nav>
+            <ul class="nav-list">
+                <li class="nav-item active" data-step="1">
+                    <span class="step-number">1</span>
+                    <span class="step-label">Get Started</span>
+                </li>
+                <li class="nav-item" data-step="2">
+                    <span class="step-number">2</span>
+                    <span class="step-label">Edit Slides</span>
+                    <span class="slide-count-badge" id="slideBadge"></span>
+                </li>
+                <li class="nav-item" data-step="3">
+                    <span class="step-number">3</span>
+                    <span class="step-label">Preview</span>
+                </li>
+                <li class="nav-item" data-step="4">
+                    <span class="step-number">4</span>
+                    <span class="step-label">Export</span>
+                </li>
+            </ul>
+        </nav>
+
+        <!-- Resume panel (hidden when no slides exist) -->
+        <div class="resume-panel" id="resumePanel" style="display: none;">
+            <div class="resume-header">📎 In Progress</div>
+            <p class="resume-info" id="resumeInfo">0 slides</p>
+            <button class="resume-btn" onclick="document.querySelector('[data-step=&quot;2&quot;]').click()">
+                Resume Editing ▶
+            </button>
+        </div>
+    </aside>
+
+    <!-- Particle canvas — lifted directly from Gamma Clone's ParticleBackground.jsx -->
+    <canvas id="particleCanvas"
+        style="position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:0;pointer-events:none;"></canvas>
+
+    <!-- MAIN CONTENT -->
+    <main class="main-content" style="position:relative;z-index:1;">
+
+        <!-- Gamma Clone prompt UI — lifted from App.jsx -->
+        <div class="gamma-hero-text">
+            <h2>Rentease <span>AI</span></h2>
+            <p>Type a topic. Get a presentation instantly.</p>
+        </div>
+
+        <div class="gamma-prompt-card">
+            <textarea id="aiPromptInput" class="gamma-prompt-input"
+                placeholder="E.g., Create a 6-slide corporate pitch deck for Rentease's new line of electric scissor lifts. Highlight eco-friendliness and safety..."></textarea>
+
+            <div class="gamma-controls">
+                <div class="gamma-settings">
+                    <label>Slides:</label>
+                    <input type="number" id="aiSlideCount" value="6" min="3" max="15" class="gamma-input-small">
+                    <span
+                        style="color:var(--color-text-secondary);font-weight:600;font-size:0.8rem;letter-spacing:0.05em;text-transform:uppercase;"></span>
+                </div>
+                <button id="aiGenerateBtn" class="gamma-generate-btn" onclick="generateAIPresentation()">
+                    Generate
+
+                </button>
+            </div>
+
+            <div id="aiLoadingStatus" class="gamma-loading" style="display:none;">
+                <div class="gamma-spinner"></div>
+                <p id="aiStatusText">AI is thinking...</p>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Load the same @google/generative-ai SDK that Gamma Clone uses (via CDN ESM) -->
+    <script type="module">
+        import { GoogleGenerativeAI } from 'https://esm.run/@google/generative-ai';
+        // Expose it globally so the non-module app.js can access it
+        window.GoogleGenerativeAI = GoogleGenerativeAI;
+    </script>
+
+    <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
+    <script src="js/db.js"></script>
+    <script src="js/app.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/pptxgenjs@3.12.0/dist/pptxgen.bundle.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+
+    <!-- Sidebar toggle for mobile -->
+    <script>
+        (function () {
+            const toggle = document.getElementById('sidebarToggle');
+            const sidebar = document.querySelector('.sidebar');
+            const overlay = document.getElementById('sidebarOverlay');
+
+            function openSidebar() {
+                sidebar.classList.add('open');
+                overlay.classList.add('active');
+                toggle.classList.add('active');
+            }
+            function closeSidebar() {
+                sidebar.classList.remove('open');
+                overlay.classList.remove('active');
+                toggle.classList.remove('active');
+            }
+
+            toggle.addEventListener('click', function () {
+                sidebar.classList.contains('open') ? closeSidebar() : openSidebar();
+            });
+            overlay.addEventListener('click', closeSidebar);
+
+            // Close sidebar when a nav item is clicked on mobile
+            document.querySelectorAll('.nav-item').forEach(function (item) {
+                item.addEventListener('click', function () {
+                    if (window.innerWidth <= 768) closeSidebar();
+                });
+            });
+        })();
+    </script>
+
+</body>
+
+</html>
