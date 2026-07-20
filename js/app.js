@@ -3161,6 +3161,9 @@ ${draft}`;
         if (rawText.startsWith('```')) rawText = rawText.substring(3);
         if (rawText.endsWith('```')) rawText = rawText.substring(0, rawText.length - 3);
 
+        // Strip markdown bold asterisks that Gemini often includes
+        rawText = rawText.replace(/\*\*/g, '');
+
         const aiSlides = JSON.parse(rawText.trim());
 
         // Process generated slides
