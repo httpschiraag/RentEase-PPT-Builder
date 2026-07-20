@@ -905,7 +905,7 @@ function getSlidePreviewHTML(slide) {
                         ${escapeHtml(slide.title) || 'SLIDE TITLE'}
                     </span>
                 </div>
-                <img src="assets/rentease_logo.png" alt="Logo" class="sf-logo" style="height:28px;">
+                <img src="assets/logo.png" alt="Logo" class="sf-logo" style="height:28px;">
             </div>` : ''}
             <div class="sf-body" style="flex:1; display:flex; min-height:0;">
                 <div class="sf-content" style="flex:1; padding:8px; overflow:hidden; min-height:0; display:flex; flex-direction:column;">
@@ -935,7 +935,7 @@ function getSlidePreviewHTML(slide) {
                     <div style="border-top: 1px solid #000; width:100%; margin-bottom:1.5%;"></div>
                     
                     <div style="background:#91BCE5; border: 2px solid #1C3B68; padding:3% 0; display:flex; flex-direction:column; align-items:center; justify-content:center; flex-shrink:0;">
-                        <img src="assets/rentease_logo.png" style="height:8%; min-height:40px; max-height:80px; width:auto;">
+                        <img src="assets/logo.png" style="height:8%; min-height:40px; max-height:80px; width:auto;">
                         <div style="font-size:clamp(0.9rem,2vw,2rem); font-weight:800; letter-spacing:1px; margin-top:1.5%;">
                             <span style="color:var(--color-primary);">${escapeHtml(titleCnParts.first)}</span><span style="color:#666666;">${escapeHtml(titleCnParts.second)}</span>
                         </div>
@@ -1194,21 +1194,21 @@ function getSlidePreviewHTML(slide) {
                         
                         <div style="display:flex; flex-direction:column; gap:16px;">
                             <div style="display:flex; align-items:flex-start; gap:8px;">
-                                <img src="assets/icon_address.png" style="width:16px; height:16px; margin-top:2px;">
+                                <div style="font-size:16px;">📍</div>
                                 <div>
                                     <div style="font-size:0.75rem; font-weight:bold; color:#000;">Address:</div>
                                     <div style="font-size:0.65rem; font-weight:bold; color:#000;">${escapeHtml(f.address || '705-706, The Landmark, Plot 26A, Sector 7, Kharghar, Navi Mumbai - 410210')}</div>
                                 </div>
                             </div>
                             <div style="display:flex; align-items:flex-start; gap:8px;">
-                                <img src="assets/icon_phone.png" style="width:16px; height:16px; margin-top:2px;">
+                                <div style="font-size:16px;">📞</div>
                                 <div>
                                     <div style="font-size:0.75rem; font-weight:bold; color:#000;">Contact numbers:</div>
                                     <div style="font-size:0.65rem; font-weight:bold; color:#000;">${escapeHtml(f.phone || '+91 22 2774 7458')}</div>
                                 </div>
                             </div>
                             <div style="display:flex; align-items:flex-start; gap:8px;">
-                                <img src="assets/icon_email.png" style="width:16px; height:16px; margin-top:2px;">
+                                <div style="font-size:16px;">✉️</div>
                                 <div>
                                     <div style="font-size:0.75rem; font-weight:bold; color:#000;">Email Address:</div>
                                     <div style="font-size:0.65rem; font-weight:bold; color:#000;">${escapeHtml(f.email || 'info@rentease.co')}</div>
@@ -2705,20 +2705,14 @@ async function buildSlideContent(pres, slide, slideData, SW, SH, RED, DARK, WHIT
             const textX = 3.5 + iconW + 0.15;
 
             // Address
-            const addrIcon = await fetchAsBase64('assets/icon_address.png');
-            slide.addImage({ data: addrIcon, x: 3.5, y: contactY, w: iconW, h: iconW });
             slide.addText('Address:', { x: textX, y: contactY - 0.05, w: 3.0, h: 0.2, fontSize: 10, bold: true, color: DARK });
             slide.addText(f.address || '705-706, The Landmark, Plot 26A, Sector 7, Kharghar, Navi Mumbai - 410210', { x: textX, y: contactY + 0.15, w: 3.5, h: 0.2, fontSize: 8, bold: true, color: DARK });
 
             // Phone
-            const phoneIcon = await fetchAsBase64('assets/icon_phone.png');
-            slide.addImage({ data: phoneIcon, x: 3.5, y: contactY + 0.6, w: iconW, h: iconW });
             slide.addText('Contact numbers:', { x: textX, y: contactY + 0.55, w: 3.0, h: 0.2, fontSize: 10, bold: true, color: DARK });
             slide.addText(f.phone || '+91 22 2774 7458', { x: textX, y: contactY + 0.75, w: 3.0, h: 0.2, fontSize: 8, bold: true, color: DARK });
 
             // Email
-            const emailIcon = await fetchAsBase64('assets/icon_email.png');
-            slide.addImage({ data: emailIcon, x: 3.5, y: contactY + 1.2, w: iconW, h: iconW });
             slide.addText('Email Address:', { x: textX, y: contactY + 1.15, w: 3.0, h: 0.2, fontSize: 10, bold: true, color: DARK });
             slide.addText(f.email || 'info@rentease.co', { x: textX, y: contactY + 1.35, w: 3.0, h: 0.2, fontSize: 8, bold: true, color: DARK });
 
