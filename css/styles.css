@@ -700,35 +700,57 @@ body {
     display: flex;
     flex-direction: column;
     gap: 32px;
+    width: 100%;
+    align-items: stretch;
 }
 
 /* ============================================
    SLIDE PREVIEW (the live preview area)
    ============================================ */
 .slide-preview-wrapper {
-    display: flex;
-    justify-content: center;
+    display: block;
     padding: 24px;
     background: #E5E7EB;
     border-radius: var(--radius);
 }
 
 .slide-preview {
+    margin: 0 auto;
+    /* Center horizontally in the block wrapper */
     width: 100%;
+    /* Strictly 100% width of the block */
     max-width: 900px;
     aspect-ratio: 16 / 9;
     background: white;
     border-radius: 4px;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
     overflow: hidden;
+    position: relative;
 }
 
+/* Every slide frame must fill the preview box exactly */
 .slide-frame {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
     height: 100%;
     display: flex;
     flex-direction: column;
-    padding: 12px;
+    overflow: hidden;
+    /* never allow scrollbars / expansion */
 }
+
+/* Flex children must not push the frame height */
+.sf-header,
+.sf-body,
+.sf-footer,
+.sf-content,
+.sf-equip-sidebar {
+    min-height: 0;
+    min-width: 0;
+}
+
 
 /* Slide header (red bar + logo) */
 .sf-header {
@@ -750,7 +772,6 @@ body {
     color: white;
     font-weight: 700;
     font-size: 0.85rem;
-    text-transform: uppercase;
     letter-spacing: 1px;
 }
 
@@ -771,6 +792,10 @@ body {
     flex: 1;
     padding: 8px;
     width: 100%;
+    overflow: hidden;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
 }
 
 .sf-left {
@@ -806,6 +831,7 @@ body {
     font-size: 0.7rem;
     color: #374151;
     line-height: 1.6;
+    white-space: pre-wrap;
 }
 
 /* Equipment sidebar in slide */
@@ -903,6 +929,40 @@ body {
     color: var(--color-text-secondary);
 }
 
+/* ============================================
+   IMAGE SHOWCASE LAYOUT (Dynamic)
+   ============================================ */
+.showcase-grid-container {
+    display: grid;
+    gap: 8px;
+    width: 100%;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    box-sizing: border-box;
+}
+.showcase-grid-1  { grid-template-columns: 1fr;                         grid-template-rows: 1fr; }
+.showcase-grid-2  { grid-template-columns: 1fr 1fr;                      grid-template-rows: 1fr; }
+.showcase-grid-3  { grid-template-columns: 1fr 1fr 1fr;                  grid-template-rows: 1fr; }
+.showcase-grid-4  { grid-template-columns: 1fr 1fr;                      grid-template-rows: 1fr 1fr; }
+.showcase-grid-5  { grid-template-columns: 1fr 1fr 1fr;                  grid-template-rows: 1fr 1fr; }
+.showcase-grid-6  { grid-template-columns: 1fr 1fr 1fr;                  grid-template-rows: 1fr 1fr; }
+.showcase-grid-7  { grid-template-columns: 1fr 1fr 1fr 1fr;              grid-template-rows: 1fr 1fr; }
+.showcase-grid-8  { grid-template-columns: 1fr 1fr 1fr 1fr;              grid-template-rows: 1fr 1fr; }
+.showcase-grid-9  { grid-template-columns: 1fr 1fr 1fr;                  grid-template-rows: 1fr 1fr 1fr; }
+.showcase-grid-10 { grid-template-columns: 1fr 1fr 1fr 1fr 1fr;          grid-template-rows: 1fr 1fr; }
+
+.showcase-img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: var(--radius-sm);
+    background: var(--color-bg-alt);
+}
+
+/* ============================================
+   THANK YOU / CONTACT LAYOUT
+   ============================================ */
 /* ============================================
    DYNAMIC CONTENT BLOCKS
    ============================================ */
@@ -1043,6 +1103,10 @@ body {
     flex-direction: column;
     align-items: center;
     gap: 4px;
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    justify-content: center;
 }
 
 .sf-img {
@@ -1057,11 +1121,23 @@ body {
     border-radius: 50%;
 }
 
+.sf-img-oval {
+    width: 100%;
+    height: 100%;
+    max-width: 250px;
+    max-height: 180px;
+    border-radius: 50%;
+}
+
 .sf-img-rectangle {
     border-radius: 0;
 }
 
 .sf-img-rounded {
+    width: 100%;
+    height: 100%;
+    max-width: 250px;
+    max-height: 180px;
     border-radius: 8px;
 }
 
@@ -1074,10 +1150,11 @@ body {
 }
 
 .sf-img-caption {
-    font-size: 0.55rem;
+    font-size: 0.85rem;
     font-weight: 600;
     color: #374151;
     text-align: center;
+    margin-top: 6px;
 }
 
 /* Preview text formatting */
@@ -1086,6 +1163,7 @@ body {
     color: #374151;
     line-height: 1.5;
     margin-bottom: 4px;
+    white-space: pre-wrap;
 }
 
 .sf-bullet {
@@ -1150,6 +1228,24 @@ body {
     background: var(--color-primary-glow);
 }
 
+.slide-thumb.dragging {
+    opacity: 0.5;
+    background: var(--color-bg-alt);
+    border-style: dashed;
+}
+
+.sortable-ghost {
+    opacity: 0.4;
+    background: var(--color-primary-glow);
+    border: 2px dashed var(--color-primary);
+}
+
+.slide-thumb.drag-over {
+    border-color: var(--color-primary);
+    box-shadow: 0 4px 12px rgba(226, 53, 40, 0.3);
+    transform: translateY(2px);
+}
+
 .slide-thumb-number {
     width: 24px;
     height: 24px;
@@ -1193,17 +1289,19 @@ body {
 .slide-thumb-actions {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    justify-content: space-between;
+    align-self: stretch;
+    padding: 2px 0;
 }
 
 .thumb-btn {
-    width: 20px;
-    height: 16px;
+    width: 24px;
+    height: 24px;
     border: none;
     background: transparent;
     color: var(--color-text-secondary);
     cursor: pointer;
-    font-size: 0.55rem;
+    font-size: 1rem;
     border-radius: 3px;
     display: flex;
     align-items: center;
@@ -1219,6 +1317,11 @@ body {
     color: var(--color-primary);
 }
 
+.thumb-btn-duplicate:hover {
+    background: #E6EEF9;
+    color: #4B8BBE;
+}
+
 .add-slide-btn {
     padding: 12px;
     border: 2px dashed var(--color-border-dark);
@@ -1230,6 +1333,10 @@ body {
     color: var(--color-text-secondary);
     cursor: pointer;
     transition: all 0.2s ease;
+    width: 100%;
+    text-align: center;
+    appearance: none;
+    -webkit-appearance: none;
 }
 
 .add-slide-btn:hover {
@@ -1240,6 +1347,7 @@ body {
 .editor-area {
     flex: 1;
     min-width: 0;
+    width: 100%;
 }
 
 /* ============================================
@@ -1434,6 +1542,7 @@ body {
     border-radius: 6px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
     overflow: hidden;
+    position: relative;
 }
 
 /* Dot indicators */
@@ -2109,4 +2218,28 @@ body {
     .ticker-wrapper {
         display: none;
     }
+}
+
+/* ============================================
+   FULLSCREEN SCALING (STEP 3)
+   ============================================ */
+.preview-slide-wrapper:fullscreen {
+    padding: 0;
+    align-items: center;
+    background: black;
+    display: flex;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.preview-slide-wrapper:fullscreen .preview-slide-canvas {
+    width: 800px;
+    height: 450px;
+    max-width: 800px;
+    border-radius: 0;
+    box-shadow: none;
+}
+
+.preview-slide-wrapper:fullscreen #fullscreenBtn {
+    display: none !important;
 }
